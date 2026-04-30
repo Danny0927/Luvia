@@ -1,6 +1,12 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { ScreenGradient } from "@/components/screen-gradient";
+import { useAccount } from "@/contexts/account";
+import { useDailyProgress } from "@/contexts/daily-progress";
+import { useGoals } from "@/contexts/goals";
+import { useThemePreference } from "@/contexts/theme-preference";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LayoutAnimation,
   Platform,
@@ -21,11 +27,13 @@ type ProfileSection =
   | "notifications"
   | "theme";
 
-const profileStats = [
-  { label: "Tasks", value: "18" },
-  { label: "Steps", value: "7.8k" },
-  { label: "Water", value: "5/8" },
-];
+type StoredTask = {
+  done: boolean;
+};
+
+type StoredTasksByDate = Record<string, StoredTask[]>;
+
+const TASKS_STORAGE_KEY = "luvia:tasks";
 
 const profileOptions: {
   key: ProfileSection;
@@ -38,28 +46,134 @@ const profileOptions: {
   { key: "theme", title: "Theme", icon: "color-palette-outline" },
 ];
 
+const parseBirthDate = (value: string) => {
+  const match = value.trim().match(/^(\d{2})-(\d{2})-(\d{4})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, dayText, monthText, yearText] = match;
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const year = Number(yearText);
+  const date = new Date(year, month - 1, day);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+};
+
+const getAge = (birthDate: string) => {
+  const date = parseBirthDate(birthDate);
+
+  if (!date) {
+    return null;
+  }
+
+  const today = new Date();
+
+  if (date > today) {
+    return null;
+  }
+
+  let age = today.getFullYear() - date.getFullYear();
+  const birthdayThisYear = new Date(
+    today.getFullYear(),
+    date.getMonth(),
+    date.getDate()
+  );
+
+  if (today < birthdayThisYear) {
+    age -= 1;
+  }
+
+  return age;
+};
+
+const getDateKey = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+
+const formatCompactNumber = (value: number) => {
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k`;
+  }
+
+  return value.toString();
+};
+
 if (Platform.OS === "android") {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
 }
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const {
+    name,
+    setName,
+    email,
+    birthDate,
+    setBirthDate,
+    logOut,
+  } = useAccount();
+  const {
+    taskGoal,
+    setTaskGoal,
+    stepGoal,
+    setStepGoal,
+    waterGoal,
+    setWaterGoal,
+  } = useGoals();
+  const { steps, waterGlasses } = useDailyProgress();
+  const { theme, setTheme } = useThemePreference();
   const [activeSection, setActiveSection] = useState<ProfileSection | null>(null);
-  const [name, setName] = useState("Your profile");
-  const [email, setEmail] = useState("you@luvia.app");
-  const [taskGoal, setTaskGoal] = useState(4);
-  const [stepGoal, setStepGoal] = useState(10000);
-  const [waterGoal, setWaterGoal] = useState(8);
+  const [todayTasks, setTodayTasks] = useState<StoredTask[]>([]);
   const [dailyReminders, setDailyReminders] = useState(true);
   const [waterReminders, setWaterReminders] = useState(true);
   const [weeklySummary, setWeeklySummary] = useState(false);
-  const [theme, setTheme] = useState<"Light" | "Soft" | "Minimal">("Light");
   const [hapticsEnabled, setHapticsEnabled] = useState(true);
   const [compactMode, setCompactMode] = useState(false);
+  const age = getAge(birthDate);
+  const todayTaskCount = todayTasks.length;
+  const profileStats = [
+    { label: "Tasks", value: todayTaskCount.toString() },
+    { label: "Steps", value: formatCompactNumber(steps) },
+    { label: "Water", value: `${waterGlasses}/${waterGoal}` },
+  ];
+
+  useEffect(() => {
+    const loadTasks = async () => {
+      try {
+        const storedTasks = await AsyncStorage.getItem(TASKS_STORAGE_KEY);
+
+        if (storedTasks) {
+          const parsedTasks = JSON.parse(storedTasks) as StoredTasksByDate;
+          setTodayTasks(parsedTasks[getDateKey(new Date())] ?? []);
+        }
+      } catch {
+        setTodayTasks([]);
+      }
+    };
+
+    void loadTasks();
+  }, []);
 
   const openSection = (section: ProfileSection) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setActiveSection((current) => (current === section ? null : section));
+  };
+
+  const handleLogOut = () => {
+    logOut();
+    router.replace("/login");
   };
 
   const renderSectionPanel = (section: ProfileSection) => {
@@ -97,14 +211,34 @@ export default function ProfileScreen() {
           />
           <Text style={styles.inputLabel}>Email</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, styles.disabledInput]}
             value={email}
-            onChangeText={setEmail}
             placeholder="you@example.com"
             placeholderTextColor="#B8AD91"
             autoCapitalize="none"
             keyboardType="email-address"
+            editable={false}
           />
+          <Text style={styles.inputLabel}>Date of birth</Text>
+          <TextInput
+            style={styles.input}
+            value={birthDate}
+            onChangeText={setBirthDate}
+            placeholder="DD-MM-YYYY"
+            placeholderTextColor="#B8AD91"
+            keyboardType="numbers-and-punctuation"
+          />
+          <View style={styles.ageCard}>
+            <View style={styles.ageIcon}>
+              <Ionicons name="calendar-outline" size={18} color="#C9B85C" />
+            </View>
+            <View style={styles.ageCopy}>
+              <Text style={styles.ageTitle}>Age</Text>
+              <Text style={styles.ageValue}>
+                {age === null ? "Add a valid date of birth" : `${age}`}
+              </Text>
+            </View>
+          </View>
         </View>
       );
     }
@@ -172,7 +306,7 @@ export default function ProfileScreen() {
       <View style={styles.panel}>
         <Text style={styles.panelTitle}>Theme</Text>
         <View style={styles.themeRow}>
-          {(["Light", "Soft", "Minimal"] as const).map((item) => {
+          {(["Standard", "Soft", "Minimal"] as const).map((item) => {
             const active = theme === item;
 
             return (
@@ -200,7 +334,7 @@ export default function ProfileScreen() {
           <View>
             <Text style={styles.themePreviewTitle}>{theme} theme</Text>
             <Text style={styles.themePreviewText}>
-              A calm light-yellow Luvia look.
+              Your selected Luvia look.
             </Text>
           </View>
         </View>
@@ -209,7 +343,8 @@ export default function ProfileScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <ScreenGradient>
+      <View style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -234,7 +369,13 @@ export default function ProfileScreen() {
           <View style={styles.avatar}>
             <Ionicons name="person-outline" size={42} color="#C9B85C" />
           </View>
-          <Text style={styles.name}>{name}</Text>
+          <Text style={styles.name}>
+            {name.trim().length === 0
+              ? "Your profile"
+              : age === null
+                ? name
+                : `${name}, ${age}`}
+          </Text>
           <Text style={styles.subtitle}>Daily planning, movement and hydration</Text>
         </View>
 
@@ -277,8 +418,14 @@ export default function ProfileScreen() {
             );
           })}
         </View>
+
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogOut}>
+          <Ionicons name="log-out-outline" size={18} color="#A46B54" />
+          <Text style={styles.logoutButtonText}>Log out</Text>
+        </TouchableOpacity>
       </ScrollView>
-    </View>
+      </View>
+    </ScreenGradient>
   );
 }
 
@@ -345,7 +492,6 @@ function SettingSwitch({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fffbeb",
   },
 
   content: {
@@ -526,6 +672,46 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
 
+  disabledInput: {
+    backgroundColor: "#F1EEE6",
+    color: "#A9A08A",
+  },
+
+  ageCard: {
+    minHeight: 66,
+    borderRadius: 20,
+    backgroundColor: "#FFFBEA",
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  ageIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#FFF7CF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+
+  ageCopy: {
+    flex: 1,
+  },
+
+  ageTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#2B2B2B",
+    marginBottom: 4,
+  },
+
+  ageValue: {
+    fontSize: 13,
+    color: "#8A8067",
+  },
+
   goalRow: {
     minHeight: 72,
     borderRadius: 20,
@@ -589,6 +775,24 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     color: "#8A8067",
+  },
+
+  logoutButton: {
+    minHeight: 52,
+    borderRadius: 20,
+    backgroundColor: "#FFE8DC",
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 24,
+  },
+
+  logoutButtonText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#A46B54",
   },
 
   themeRow: {

@@ -1,4 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { ScreenGradient } from "@/components/screen-gradient";
+import { useDailyProgress } from "@/contexts/daily-progress";
+import { useGoals } from "@/contexts/goals";
 import type { ComponentProps } from "react";
 import { useState } from "react";
 import {
@@ -46,12 +49,16 @@ const reminders: {
 ];
 
 export default function WaterScreen() {
-  const [glasses, setGlasses] = useState(5);
-  const [goal, setGoal] = useState(8);
+  const { waterGoal: goal, setWaterGoal: setGoal } = useGoals();
+  const { waterGlasses: glasses, setWaterGlasses: setGlasses } =
+    useDailyProgress();
   const [showSettings, setShowSettings] = useState(false);
+  const [reverseReminders, setReverseReminders] = useState(false);
+  const [expandedReminder, setExpandedReminder] = useState<string | null>(null);
   const progress = glasses / goal;
   const liters = (glasses * 0.25).toFixed(2);
   const goalLiters = (goal * 0.25).toFixed(2);
+  const visibleReminders = reverseReminders ? [...reminders].reverse() : reminders;
 
   const addGlass = () => {
     setGlasses((current) => Math.min(current + 1, goal));
@@ -62,7 +69,8 @@ export default function WaterScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <ScreenGradient>
+      <View style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -187,15 +195,29 @@ export default function WaterScreen() {
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Reminders</Text>
-          <TouchableOpacity style={styles.filterButton}>
+          <View>
+            <Text style={styles.sectionTitle}>Reminders</Text>
+            {reverseReminders && <Text style={styles.activeFilterText}>Latest first</Text>}
+          </View>
+          <TouchableOpacity
+            style={[styles.filterButton, reverseReminders && styles.activeCircleBtn]}
+            onPress={() => setReverseReminders((current) => !current)}
+          >
             <Ionicons name="time-outline" size={18} color="#C9B85C" />
           </TouchableOpacity>
         </View>
 
         <View style={styles.reminderList}>
-          {reminders.map((item) => (
-            <TouchableOpacity key={item.time} style={styles.reminderCard}>
+          {visibleReminders.map((item) => (
+            <TouchableOpacity
+              key={item.time}
+              style={styles.reminderCard}
+              onPress={() =>
+                setExpandedReminder((current) =>
+                  current === item.time ? null : item.time
+                )
+              }
+            >
               <View style={styles.timePill}>
                 <Text style={styles.timeText}>{item.time}</Text>
               </View>
@@ -205,19 +227,27 @@ export default function WaterScreen() {
               <View style={styles.reminderContent}>
                 <Text style={styles.reminderTitle}>{item.title}</Text>
                 <Text style={styles.reminderDetail}>{item.detail}</Text>
+                {expandedReminder === item.time && (
+                  <Text style={styles.reminderMeta}>Reminder enabled</Text>
+                )}
               </View>
+              <Ionicons
+                name={expandedReminder === item.time ? "chevron-up" : "chevron-forward"}
+                size={18}
+                color="#C7B98F"
+              />
             </TouchableOpacity>
           ))}
         </View>
       </ScrollView>
-    </View>
+      </View>
+    </ScreenGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fffbeb",
   },
 
   content: {
@@ -252,6 +282,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFF7CF",
     justifyContent: "center",
     alignItems: "center",
+  },
+
+  activeCircleBtn: {
+    backgroundColor: "#FFF0A8",
   },
 
   settingsCard: {
@@ -463,6 +497,13 @@ const styles = StyleSheet.create({
     color: "#2B2B2B",
   },
 
+  activeFilterText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#C9B85C",
+    marginTop: 4,
+  },
+
   filterButton: {
     width: 34,
     height: 34,
@@ -522,5 +563,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#8A8067",
     marginTop: 5,
+  },
+
+  reminderMeta: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#C9B85C",
+    marginTop: 8,
   },
 });

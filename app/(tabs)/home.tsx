@@ -1,8 +1,14 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
+import { ScreenGradient } from "@/components/screen-gradient";
+import { useAccount } from "@/contexts/account";
+import { useDailyProgress } from "@/contexts/daily-progress";
+import { useGoals } from "@/contexts/goals";
+import { useFocusEffect } from "@react-navigation/native";
 import type { ComponentProps } from "react";
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
   PanResponder,
@@ -23,6 +29,25 @@ type Task = {
   done: boolean;
 };
 
+type TasksByDate = Record<string, Task[]>;
+
+type AgendaItem = {
+  time: string;
+  title: string;
+  note: string;
+  type: string;
+  icon: IconName;
+  color: string;
+  background: string;
+};
+
+type AgendaByDate = Record<string, AgendaItem[]>;
+
+type UpcomingEvent = AgendaItem & {
+  date: Date;
+  dateLabel: string;
+};
+
 const taskIconOptions: IconName[] = [
   "ellipse-outline",
   "body-outline",
@@ -35,6 +60,8 @@ const taskIconOptions: IconName[] = [
 ];
 
 const TASK_SWIPE_WIDTH = 96;
+const TASKS_STORAGE_KEY = "luvia:tasks";
+const AGENDA_STORAGE_KEY = "luvia:agenda";
 
 const getWeek = (today: Date) => {
   const start = new Date(today);
@@ -74,9 +101,102 @@ const formatTaskTimeInput = (value: string) => {
   return `${digits.slice(0, 2)}:${digits.slice(2)}`;
 };
 
+const getGreeting = (date: Date) => {
+  const hour = date.getHours();
+
+  if (hour < 12) {
+    return "Good morning";
+  }
+
+  if (hour < 18) {
+    return "Good afternoon";
+  }
+
+  return "Good evening";
+};
+
+const getDateKey = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+
+const parseDateKey = (dateKey: string) => {
+  const [yearText, monthText, dayText] = dateKey.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return new Date(year, month - 1, day);
+};
+
+const parseBirthDate = (value: string) => {
+  const match = value.trim().match(/^(\d{2})-(\d{2})-(\d{4})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, dayText, monthText, yearText] = match;
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const year = Number(yearText);
+  const date = new Date(year, month - 1, day);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+};
+
+const getNextBirthday = (birthDate: string, today: Date) => {
+  const date = parseBirthDate(birthDate);
+
+  if (!date) {
+    return null;
+  }
+
+  const nextBirthday = new Date(
+    today.getFullYear(),
+    date.getMonth(),
+    date.getDate()
+  );
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate()
+  );
+
+  if (nextBirthday < todayStart) {
+    nextBirthday.setFullYear(nextBirthday.getFullYear() + 1);
+  }
+
+  return nextBirthday;
+};
+
+const formatCompactNumber = (value: number) => {
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k`;
+  }
+
+  return value.toString();
+};
+
 export default function HomeScreen() {
   const router = useRouter();
-  const today = new Date();
+  const { birthDate } = useAccount();
+  const { steps, waterGlasses } = useDailyProgress();
+  const { waterGoal } = useGoals();
+  const [now, setNow] = useState(() => new Date());
+  const today = now;
   const days = getWeek(today);
   const todayIndex = days.findIndex(
     (item) =>
@@ -86,32 +206,9 @@ export default function HomeScreen() {
   );
 
   const [selectedDay, setSelectedDay] = useState(todayIndex);
-  const [tasks, setTasks] = useState<Task[]>([
-    {
-      text: "Stretch and roll out",
-      time: "08:30",
-      icon: "body-outline",
-      done: false,
-    },
-    {
-      text: "Podcast walk",
-      time: "10:00",
-      icon: "headset-outline",
-      done: false,
-    },
-    {
-      text: "Plan my day",
-      time: "11:30",
-      icon: "create-outline",
-      done: true,
-    },
-    {
-      text: "Schedule posts",
-      time: "15:00",
-      icon: "calendar-outline",
-      done: false,
-    },
-  ]);
+  const [tasksByDate, setTasksByDate] = useState<TasksByDate>({});
+  const [agendaByDate, setAgendaByDate] = useState<AgendaByDate>({});
+  const [hydratedTasks, setHydratedTasks] = useState(false);
   const [showTaskInput, setShowTaskInput] = useState(false);
   const [newTaskText, setNewTaskText] = useState("");
   const [newTaskTime, setNewTaskTime] = useState("");
@@ -119,6 +216,59 @@ export default function HomeScreen() {
     useState<IconName>("ellipse-outline");
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showNextEventDetails, setShowNextEventDetails] = useState(false);
+  const greeting = getGreeting(now);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 60000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  const loadHomeData = useCallback(async () => {
+    try {
+      const [storedTasks, storedAgenda] = await Promise.all([
+        AsyncStorage.getItem(TASKS_STORAGE_KEY),
+        AsyncStorage.getItem(AGENDA_STORAGE_KEY),
+      ]);
+
+      if (storedTasks) {
+        setTasksByDate(JSON.parse(storedTasks) as TasksByDate);
+      }
+
+      if (storedAgenda) {
+        setAgendaByDate(JSON.parse(storedAgenda) as AgendaByDate);
+      }
+    } catch {
+      // Keep current in-memory data if local storage is unavailable or corrupted.
+    } finally {
+      setHydratedTasks(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadHomeData();
+  }, [loadHomeData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadHomeData();
+    }, [loadHomeData])
+  );
+
+  useEffect(() => {
+    if (!hydratedTasks) {
+      return;
+    }
+
+    void AsyncStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasksByDate)).catch(
+      () => {
+        // Keep in-memory tasks even if persistence fails.
+      }
+    );
+  }, [hydratedTasks, tasksByDate]);
 
   const selectedDate = days[selectedDay]?.full ?? today;
   const isToday =
@@ -132,14 +282,77 @@ export default function HomeScreen() {
     month: "long",
     day: "numeric",
   });
+  const selectedDateKey = getDateKey(selectedDate);
+  const tasks = tasksByDate[selectedDateKey] ?? [];
+  const agenda = agendaByDate[selectedDateKey] ?? [];
+  const upcomingEvents: UpcomingEvent[] = Object.entries(agendaByDate).flatMap(
+    ([dateKey, items]) => {
+      const date = parseDateKey(dateKey);
+
+      if (!date) {
+        return [];
+      }
+
+      const dateLabelForEvent = date.toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+      });
+
+      return items.map((item) => ({
+        ...item,
+        date,
+        dateLabel: dateLabelForEvent,
+      }));
+    }
+  );
+  const birthdayDate = getNextBirthday(birthDate, today);
+
+  if (birthdayDate) {
+    upcomingEvents.push({
+      time: "All day",
+      title: "Your birthday",
+      note: "Your birthday is coming up.",
+      type: "Birthday",
+      icon: "gift-outline",
+      color: "#C9B85C",
+      background: "#FFF0A8",
+      date: birthdayDate,
+      dateLabel: birthdayDate.toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+      }),
+    });
+  }
+
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const nextEvent =
+    upcomingEvents
+      .filter((item) => item.date >= todayStart)
+      .sort((firstEvent, secondEvent) => {
+        const dateDifference =
+          firstEvent.date.getTime() - secondEvent.date.getTime();
+
+        if (dateDifference !== 0) {
+          return dateDifference;
+        }
+
+        return firstEvent.time.localeCompare(secondEvent.time);
+      })[0] ?? null;
   const completedTasks = tasks.filter((task) => task.done).length;
   const taskProgress = tasks.length > 0 ? completedTasks / tasks.length : 0;
   const visibleTasks = tasks.filter((task) =>
     task.text.toLowerCase().includes(searchQuery.trim().toLowerCase())
   );
 
+  const updateSelectedDateTasks = (updater: (currentTasks: Task[]) => Task[]) => {
+    setTasksByDate((currentTasksByDate) => ({
+      ...currentTasksByDate,
+      [selectedDateKey]: updater(currentTasksByDate[selectedDateKey] ?? []),
+    }));
+  };
+
   const toggleTask = (index: number) => {
-    setTasks((currentTasks) =>
+    updateSelectedDateTasks((currentTasks) =>
       currentTasks.map((task, taskIndex) =>
         taskIndex === index ? { ...task, done: !task.done } : task
       )
@@ -147,7 +360,7 @@ export default function HomeScreen() {
   };
 
   const deleteTask = (index: number) => {
-    setTasks((currentTasks) =>
+    updateSelectedDateTasks((currentTasks) =>
       currentTasks.filter((_, taskIndex) => taskIndex !== index)
     );
   };
@@ -159,7 +372,7 @@ export default function HomeScreen() {
       return;
     }
 
-    setTasks((currentTasks) => [
+    updateSelectedDateTasks((currentTasks) => [
       ...currentTasks,
       {
         text: trimmedText,
@@ -175,14 +388,15 @@ export default function HomeScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <ScreenGradient>
+      <View style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.topRow}>
           <View>
-            <Text style={styles.kicker}>Good morning</Text>
+            <Text style={styles.kicker}>{greeting}</Text>
             <Text style={styles.title}>{dayLabel}</Text>
           </View>
 
@@ -227,9 +441,13 @@ export default function HomeScreen() {
         <View style={styles.heroCard}>
           <View>
             <Text style={styles.heroDate}>{dateLabel}</Text>
-            <Text style={styles.heroTitle}>Your day is set up</Text>
+            <Text style={styles.heroTitle}>
+              {tasks.length === 0 ? "Your day is clear" : "Your day is set up"}
+            </Text>
             <Text style={styles.heroText}>
-              {completedTasks} of {tasks.length} tasks complete. Keep the pace gentle and clear.
+              {tasks.length === 0
+                ? "Add your own tasks when you are ready."
+                : `${completedTasks} of ${tasks.length} tasks complete. Keep the pace gentle and clear.`}
             </Text>
           </View>
 
@@ -265,41 +483,83 @@ export default function HomeScreen() {
 
         <View style={styles.summaryRow}>
           <View style={styles.summaryItem}>
-            <Text style={styles.summaryNumber}>3</Text>
+            <Text style={styles.summaryNumber}>{agenda.length}</Text>
             <Text style={styles.summaryLabel}>Events</Text>
           </View>
           <View style={styles.summaryDivider} />
           <View style={styles.summaryItem}>
-            <Text style={styles.summaryNumber}>7,840</Text>
+            <Text style={styles.summaryNumber}>{formatCompactNumber(steps)}</Text>
             <Text style={styles.summaryLabel}>Steps</Text>
           </View>
           <View style={styles.summaryDivider} />
           <View style={styles.summaryItem}>
-            <Text style={styles.summaryNumber}>5/8</Text>
+            <Text style={styles.summaryNumber}>
+              {waterGlasses}/{waterGoal}
+            </Text>
             <Text style={styles.summaryLabel}>Water</Text>
           </View>
         </View>
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Next event</Text>
-          <TouchableOpacity style={styles.filterButton}>
+          <TouchableOpacity
+            style={styles.filterButton}
+            onPress={() => setSelectedDay(todayIndex)}
+          >
             <Ionicons name="calendar-outline" size={18} color="#C9B85C" />
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.eventCard}>
-          <View style={styles.eventTime}>
-            <Text style={styles.eventTimeText}>11:30</Text>
+        {nextEvent ? (
+          <>
+            <TouchableOpacity
+              style={styles.eventCard}
+              onPress={() => setShowNextEventDetails((visible) => !visible)}
+            >
+              <View style={styles.eventTime}>
+                <Text style={styles.eventTimeText}>{nextEvent.time}</Text>
+              </View>
+              <View
+                style={[
+                  styles.eventIcon,
+                  { backgroundColor: nextEvent.background },
+                ]}
+              >
+                <Ionicons
+                  name={nextEvent.icon}
+                  size={20}
+                  color={nextEvent.color}
+                />
+              </View>
+              <View style={styles.eventContent}>
+                <Text style={styles.eventTitle}>{nextEvent.title}</Text>
+                <Text style={styles.eventNote}>
+                  {nextEvent.dateLabel} - {nextEvent.note}
+                </Text>
+              </View>
+              <Ionicons
+                name={showNextEventDetails ? "chevron-up" : "chevron-forward"}
+                size={18}
+                color="#C7B98F"
+              />
+            </TouchableOpacity>
+            {showNextEventDetails && (
+              <View style={styles.eventDetailCard}>
+                <Text style={styles.eventDetailText}>
+                  {nextEvent.type} event on {nextEvent.dateLabel}.
+                </Text>
+              </View>
+            )}
+          </>
+        ) : (
+          <View style={styles.emptyEventCard}>
+            <Ionicons name="calendar-outline" size={24} color="#C9B85C" />
+            <Text style={styles.emptyEventTitle}>No events yet</Text>
+            <Text style={styles.emptyEventText}>
+              Add an event in Agenda and it will show here.
+            </Text>
           </View>
-          <View style={styles.eventIcon}>
-            <Ionicons name="create-outline" size={20} color="#C9B85C" />
-          </View>
-          <View style={styles.eventContent}>
-            <Text style={styles.eventTitle}>Content planning</Text>
-            <Text style={styles.eventNote}>Draft ideas and schedule posts</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#C7B98F" />
-        </TouchableOpacity>
+        )}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>To do</Text>
@@ -388,6 +648,19 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.taskList}>
+          {visibleTasks.length === 0 && (
+            <View style={styles.emptyTaskCard}>
+              <Ionicons name="add-circle-outline" size={24} color="#C9B85C" />
+              <Text style={styles.emptyTaskTitle}>
+                {searchQuery.trim().length > 0 ? "No tasks found" : "No tasks yet"}
+              </Text>
+              <Text style={styles.emptyTaskText}>
+                {searchQuery.trim().length > 0
+                  ? "Try another search term for this day."
+                  : "Tap the plus button above to add one for this day."}
+              </Text>
+            </View>
+          )}
           {visibleTasks.map((task) => {
             const taskIndex = tasks.findIndex((item) => item === task);
 
@@ -402,7 +675,8 @@ export default function HomeScreen() {
           })}
         </View>
       </ScrollView>
-    </View>
+      </View>
+    </ScreenGradient>
   );
 }
 
@@ -513,7 +787,6 @@ function SwipeableTaskCard({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fffbeb",
   },
 
   content: {
@@ -760,6 +1033,43 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
 
+  eventDetailCard: {
+    borderRadius: 20,
+    backgroundColor: "#FFFFFF",
+    padding: 14,
+    marginTop: -18,
+    marginBottom: 28,
+  },
+
+  eventDetailText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#8A8067",
+  },
+
+  emptyEventCard: {
+    borderRadius: 22,
+    backgroundColor: "#FFFFFF",
+    padding: 18,
+    alignItems: "center",
+    marginBottom: 28,
+  },
+
+  emptyEventTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#2B2B2B",
+    marginTop: 10,
+  },
+
+  emptyEventText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#8A8067",
+    marginTop: 5,
+    textAlign: "center",
+  },
+
   addTaskPanel: {
     borderRadius: 22,
     backgroundColor: "#FFFFFF",
@@ -864,6 +1174,28 @@ const styles = StyleSheet.create({
 
   taskList: {
     gap: 12,
+  },
+
+  emptyTaskCard: {
+    borderRadius: 22,
+    backgroundColor: "#FFFFFF",
+    padding: 18,
+    alignItems: "center",
+  },
+
+  emptyTaskTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#2B2B2B",
+    marginTop: 10,
+  },
+
+  emptyTaskText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#8A8067",
+    marginTop: 5,
+    textAlign: "center",
   },
 
   swipeContainer: {

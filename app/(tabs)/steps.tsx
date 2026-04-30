@@ -1,4 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { ScreenGradient } from "@/components/screen-gradient";
+import { useDailyProgress } from "@/contexts/daily-progress";
+import { useGoals } from "@/contexts/goals";
 import type { ComponentProps } from "react";
 import { useState } from "react";
 import {
@@ -27,6 +30,7 @@ const walkSessions: {
   icon: IconName;
   background: string;
   color: string;
+  status: "Done" | "Planned";
 }[] = [
   {
     title: "Morning walk",
@@ -34,6 +38,7 @@ const walkSessions: {
     icon: "sunny-outline",
     background: "#FFF7CF",
     color: "#C9B85C",
+    status: "Done",
   },
   {
     title: "Errands",
@@ -41,6 +46,7 @@ const walkSessions: {
     icon: "bag-handle-outline",
     background: "#FFF2BE",
     color: "#8D7A3A",
+    status: "Done",
   },
   {
     title: "Evening reset",
@@ -48,17 +54,29 @@ const walkSessions: {
     icon: "moon-outline",
     background: "#E8F0DD",
     color: "#6D8A63",
+    status: "Planned",
   },
 ];
 
+const activityFilters = ["All", "Done", "Planned"] as const;
+
 export default function StepsScreen() {
-  const [goal] = useState(10000);
-  const [steps] = useState(7840);
-  const progress = steps / goal;
-  const remaining = goal - steps;
+  const { stepGoal: goal } = useGoals();
+  const { steps, setSteps } = useDailyProgress();
+  const [showStats, setShowStats] = useState(false);
+  const [showChart, setShowChart] = useState(true);
+  const [activityFilter, setActivityFilter] =
+    useState<(typeof activityFilters)[number]>("All");
+  const [expandedSession, setExpandedSession] = useState<string | null>(null);
+  const progress = goal > 0 ? steps / goal : 0;
+  const remaining = Math.max(goal - steps, 0);
+  const visibleSessions = walkSessions.filter(
+    (item) => activityFilter === "All" || item.status === activityFilter
+  );
 
   return (
-    <View style={styles.container}>
+    <ScreenGradient>
+      <View style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -70,10 +88,22 @@ export default function StepsScreen() {
           </View>
 
           <View style={styles.topButtons}>
-            <TouchableOpacity style={styles.circleBtn}>
+            <TouchableOpacity
+              style={[styles.circleBtn, showStats && styles.activeCircleBtn]}
+              onPress={() => setShowStats((visible) => !visible)}
+            >
               <Ionicons name="stats-chart-outline" size={20} color="#C9B85C" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.circleBtn}>
+            <TouchableOpacity
+              style={styles.circleBtn}
+              onPress={() => setSteps((current) => Math.max(current - 250, 0))}
+            >
+              <Ionicons name="remove" size={22} color="#C9B85C" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.circleBtn}
+              onPress={() => setSteps((current) => Math.min(current + 250, goal))}
+            >
               <Ionicons name="add" size={22} color="#C9B85C" />
             </TouchableOpacity>
           </View>
@@ -104,6 +134,18 @@ export default function StepsScreen() {
           </View>
         </View>
 
+        {showStats && (
+          <View style={styles.statsPanel}>
+            <View>
+              <Text style={styles.statsPanelTitle}>Progress</Text>
+              <Text style={styles.statsPanelText}>
+                {Math.round(progress * 100)}% complete today
+              </Text>
+            </View>
+            <Text style={styles.statsPanelValue}>{remaining.toLocaleString()} left</Text>
+          </View>
+        )}
+
         <View style={styles.summaryRow}>
           <View style={styles.summaryItem}>
             <Text style={styles.summaryNumber}>5.6 km</Text>
@@ -123,52 +165,85 @@ export default function StepsScreen() {
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Weekly rhythm</Text>
-          <TouchableOpacity style={styles.filterButton}>
+          <TouchableOpacity
+            style={[styles.filterButton, showChart && styles.activeCircleBtn]}
+            onPress={() => setShowChart((visible) => !visible)}
+          >
             <Ionicons name="calendar-outline" size={18} color="#C9B85C" />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.chartCard}>
-          {weekProgress.map((item) => (
-            <View key={item.day} style={styles.barItem}>
-              <View style={styles.barTrack}>
-                <View style={[styles.barFill, { height: `${item.value * 100}%` }]} />
+        {showChart && (
+          <View style={styles.chartCard}>
+            {weekProgress.map((item) => (
+              <View key={item.day} style={styles.barItem}>
+                <View style={styles.barTrack}>
+                  <View style={[styles.barFill, { height: `${item.value * 100}%` }]} />
+                </View>
+                <Text style={styles.barLabel}>{item.day}</Text>
               </View>
-              <Text style={styles.barLabel}>{item.day}</Text>
-            </View>
-          ))}
-        </View>
+            ))}
+          </View>
+        )}
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Activity</Text>
-          <TouchableOpacity style={styles.filterButton}>
+          <View>
+            <Text style={styles.sectionTitle}>Activity</Text>
+            {activityFilter !== "All" && (
+              <Text style={styles.activeFilterText}>{activityFilter}</Text>
+            )}
+          </View>
+          <TouchableOpacity
+            style={[styles.filterButton, activityFilter !== "All" && styles.activeCircleBtn]}
+            onPress={() =>
+              setActivityFilter((current) => {
+                const currentIndex = activityFilters.indexOf(current);
+                return activityFilters[(currentIndex + 1) % activityFilters.length];
+              })
+            }
+          >
             <Ionicons name="options-outline" size={18} color="#C9B85C" />
           </TouchableOpacity>
         </View>
 
         <View style={styles.sessionList}>
-          {walkSessions.map((item) => (
-            <TouchableOpacity key={item.title} style={styles.sessionCard}>
+          {visibleSessions.map((item) => (
+            <TouchableOpacity
+              key={item.title}
+              style={styles.sessionCard}
+              onPress={() =>
+                setExpandedSession((current) =>
+                  current === item.title ? null : item.title
+                )
+              }
+            >
               <View style={[styles.sessionIcon, { backgroundColor: item.background }]}>
                 <Ionicons name={item.icon} size={20} color={item.color} />
               </View>
               <View style={styles.sessionContent}>
                 <Text style={styles.sessionTitle}>{item.title}</Text>
                 <Text style={styles.sessionDetail}>{item.detail}</Text>
+                {expandedSession === item.title && (
+                  <Text style={styles.sessionMeta}>{item.status}</Text>
+                )}
               </View>
-              <Ionicons name="chevron-forward" size={18} color="#C7B98F" />
+              <Ionicons
+                name={expandedSession === item.title ? "chevron-up" : "chevron-forward"}
+                size={18}
+                color="#C7B98F"
+              />
             </TouchableOpacity>
           ))}
         </View>
       </ScrollView>
-    </View>
+      </View>
+    </ScreenGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fffbeb",
   },
 
   content: {
@@ -208,6 +283,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFF7CF",
     justifyContent: "center",
     alignItems: "center",
+  },
+
+  activeCircleBtn: {
+    backgroundColor: "#FFF0A8",
   },
 
   heroCard: {
@@ -281,6 +360,36 @@ const styles = StyleSheet.create({
     backgroundColor: "#F3DF7D",
   },
 
+  statsPanel: {
+    minHeight: 72,
+    borderRadius: 22,
+    backgroundColor: "#FFFFFF",
+    padding: 14,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: -8,
+    marginBottom: 20,
+  },
+
+  statsPanelTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#2B2B2B",
+    marginBottom: 4,
+  },
+
+  statsPanelText: {
+    fontSize: 13,
+    color: "#8A8067",
+  },
+
+  statsPanelValue: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#C9B85C",
+  },
+
   summaryRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -325,6 +434,13 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "600",
     color: "#2B2B2B",
+  },
+
+  activeFilterText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#C9B85C",
+    marginTop: 4,
   },
 
   filterButton: {
@@ -411,5 +527,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#8A8067",
     marginTop: 5,
+  },
+
+  sessionMeta: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#C9B85C",
+    marginTop: 8,
   },
 });
