@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
 import { ScreenGradient } from "@/components/screen-gradient";
+import { useAccount } from "@/contexts/account";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams } from "expo-router";
 import type { ComponentProps } from "react";
@@ -72,6 +73,8 @@ const eventIconOptions: {
 const agendaFilters = ["All", "Event", "Birthday", "Work", "Health", "Personal"] as const;
 const AGENDA_STORAGE_KEY = "luvia:agenda";
 const EVENT_SWIPE_WIDTH = 96;
+const getScopedStorageKey = (baseKey: string, accountKey: string) =>
+  `${baseKey}:${accountKey}`;
 
 const getWeek = (today: Date) => {
   const start = new Date(today);
@@ -192,6 +195,7 @@ const getWeekRangeLabel = (weekDays: ReturnType<typeof getWeek>, today: Date) =>
 };
 
 export default function PlansScreen() {
+  const { activeAccountKey } = useAccount();
   const params = useLocalSearchParams<{
     date?: string;
     openCalendar?: string;
@@ -249,9 +253,18 @@ export default function PlansScreen() {
   });
 
   useEffect(() => {
+    if (!activeAccountKey) {
+      return;
+    }
+
+    setAgendaByDate({});
+    setHydratedAgenda(false);
+
     const loadAgenda = async () => {
       try {
-        const storedAgenda = await AsyncStorage.getItem(AGENDA_STORAGE_KEY);
+        const storedAgenda = await AsyncStorage.getItem(
+          getScopedStorageKey(AGENDA_STORAGE_KEY, activeAccountKey)
+        );
 
         if (storedAgenda) {
           setAgendaByDate(JSON.parse(storedAgenda) as AgendaByDate);
@@ -264,7 +277,7 @@ export default function PlansScreen() {
     };
 
     void loadAgenda();
-  }, []);
+  }, [activeAccountKey]);
 
   useFocusEffect(
     useCallback(() => {
@@ -295,17 +308,17 @@ export default function PlansScreen() {
   }, [params.date, params.openCalendar, params.openedAt]);
 
   useEffect(() => {
-    if (!hydratedAgenda) {
+    if (!hydratedAgenda || !activeAccountKey) {
       return;
     }
 
     void AsyncStorage.setItem(
-      AGENDA_STORAGE_KEY,
+      getScopedStorageKey(AGENDA_STORAGE_KEY, activeAccountKey),
       JSON.stringify(agendaByDate)
     ).catch(() => {
       // Keep in-memory agenda even if persistence fails.
     });
-  }, [agendaByDate, hydratedAgenda]);
+  }, [activeAccountKey, agendaByDate, hydratedAgenda]);
 
   const updateSelectedDateAgenda = (
     updater: (currentAgenda: AgendaItem[]) => AgendaItem[]

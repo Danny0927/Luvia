@@ -36,6 +36,8 @@ type StoredTask = {
 type StoredTasksByDate = Record<string, StoredTask[]>;
 
 const TASKS_STORAGE_KEY = "luvia:tasks";
+const getScopedStorageKey = (baseKey: string, accountKey: string) =>
+  `${baseKey}:${accountKey}`;
 
 const profileOptions: {
   key: ProfileSection;
@@ -126,6 +128,9 @@ export default function ProfileScreen() {
     setBirthDate,
     profileImageUri,
     setProfileImageUri,
+    password,
+    setPassword,
+    activeAccountKey,
     logOut,
   } = useAccount();
   const {
@@ -145,6 +150,11 @@ export default function ProfileScreen() {
   const [weeklySummary, setWeeklySummary] = useState(false);
   const [hapticsEnabled, setHapticsEnabled] = useState(true);
   const [compactMode, setCompactMode] = useState(false);
+  const [currentPasswordInput, setCurrentPasswordInput] = useState("");
+  const [newPasswordInput, setNewPasswordInput] = useState("");
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [showPasswordFields, setShowPasswordFields] = useState(false);
   const age = getAge(birthDate);
   const todayTaskCount = todayTasks.length;
   const profileStats = [
@@ -154,13 +164,21 @@ export default function ProfileScreen() {
   ];
 
   useEffect(() => {
+    if (!activeAccountKey) {
+      return;
+    }
+
     const loadTasks = async () => {
       try {
-        const storedTasks = await AsyncStorage.getItem(TASKS_STORAGE_KEY);
+        const storedTasks = await AsyncStorage.getItem(
+          getScopedStorageKey(TASKS_STORAGE_KEY, activeAccountKey)
+        );
 
         if (storedTasks) {
           const parsedTasks = JSON.parse(storedTasks) as StoredTasksByDate;
           setTodayTasks(parsedTasks[getDateKey(new Date())] ?? []);
+        } else {
+          setTodayTasks([]);
         }
       } catch {
         setTodayTasks([]);
@@ -168,7 +186,7 @@ export default function ProfileScreen() {
     };
 
     void loadTasks();
-  }, []);
+  }, [activeAccountKey]);
 
   const openSection = (section: ProfileSection) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -198,6 +216,29 @@ export default function ProfileScreen() {
   const handleLogOut = () => {
     logOut();
     router.replace("/login");
+  };
+
+  const changePassword = () => {
+    if (currentPasswordInput !== password) {
+      setPasswordMessage("Current password is incorrect.");
+      return;
+    }
+
+    if (newPasswordInput.length < 4) {
+      setPasswordMessage("New password needs at least 4 characters.");
+      return;
+    }
+
+    if (newPasswordInput !== confirmPasswordInput) {
+      setPasswordMessage("New passwords do not match.");
+      return;
+    }
+
+    setPassword(newPasswordInput);
+    setCurrentPasswordInput("");
+    setNewPasswordInput("");
+    setConfirmPasswordInput("");
+    setPasswordMessage("Password updated.");
   };
 
   const renderSectionPanel = (section: ProfileSection) => {
@@ -233,16 +274,6 @@ export default function ProfileScreen() {
             placeholder="Your name"
             placeholderTextColor="#B8AD91"
           />
-          <Text style={styles.inputLabel}>Email</Text>
-          <TextInput
-            style={[styles.input, styles.disabledInput]}
-            value={email}
-            placeholder="you@example.com"
-            placeholderTextColor="#B8AD91"
-            autoCapitalize="none"
-            keyboardType="email-address"
-            editable={false}
-          />
           <Text style={styles.inputLabel}>Date of birth</Text>
           <TextInput
             style={styles.input}
@@ -262,6 +293,92 @@ export default function ProfileScreen() {
                 {age === null ? "Add a valid date of birth" : `${age}`}
               </Text>
             </View>
+          </View>
+          <Text style={styles.inputLabel}>Email</Text>
+          <TextInput
+            style={[styles.input, styles.disabledInput]}
+            value={email}
+            placeholder="you@example.com"
+            placeholderTextColor="#B8AD91"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            editable={false}
+          />
+          <View style={styles.passwordCard}>
+            <TouchableOpacity
+              style={styles.passwordHeader}
+              onPress={() => setShowPasswordFields((visible) => !visible)}
+            >
+              <View style={styles.ageIcon}>
+                <Ionicons name="lock-closed-outline" size={18} color="#C9B85C" />
+              </View>
+              <View style={styles.ageCopy}>
+                <Text style={styles.ageTitle}>Password</Text>
+                <Text style={styles.passwordHint}>
+                  Change your password with your current one.
+                </Text>
+              </View>
+              <Ionicons
+                name={showPasswordFields ? "chevron-up" : "chevron-down"}
+                size={18}
+                color="#C7B98F"
+              />
+            </TouchableOpacity>
+            {showPasswordFields && (
+              <View style={styles.passwordFields}>
+                <TextInput
+                  style={styles.input}
+                  value={currentPasswordInput}
+                  onChangeText={(value) => {
+                    setCurrentPasswordInput(value);
+                    setPasswordMessage("");
+                  }}
+                  placeholder="Current password"
+                  placeholderTextColor="#B8AD91"
+                  secureTextEntry
+                />
+                <TextInput
+                  style={styles.input}
+                  value={newPasswordInput}
+                  onChangeText={(value) => {
+                    setNewPasswordInput(value);
+                    setPasswordMessage("");
+                  }}
+                  placeholder="New password"
+                  placeholderTextColor="#B8AD91"
+                  secureTextEntry
+                />
+                <TextInput
+                  style={styles.input}
+                  value={confirmPasswordInput}
+                  onChangeText={(value) => {
+                    setConfirmPasswordInput(value);
+                    setPasswordMessage("");
+                  }}
+                  placeholder="Confirm new password"
+                  placeholderTextColor="#B8AD91"
+                  secureTextEntry
+                />
+                {passwordMessage.length > 0 && (
+                  <Text
+                    style={[
+                      styles.passwordMessage,
+                      passwordMessage === "Password updated." &&
+                        styles.successPasswordMessage,
+                    ]}
+                  >
+                    {passwordMessage}
+                  </Text>
+                )}
+                <TouchableOpacity
+                  style={styles.passwordButton}
+                  onPress={changePassword}
+                >
+                  <Text style={styles.passwordButtonText}>Change password</Text>
+                  <Ionicons name="checkmark" size={18} color="#4A432F" />
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
       );
@@ -788,6 +905,7 @@ const styles = StyleSheet.create({
     padding: 14,
     flexDirection: "row",
     alignItems: "center",
+    marginBottom: 14,
   },
 
   ageIcon: {
@@ -814,6 +932,55 @@ const styles = StyleSheet.create({
   ageValue: {
     fontSize: 13,
     color: "#8A8067",
+  },
+
+  passwordCard: {
+    borderRadius: 20,
+    backgroundColor: "#FFFBEA",
+    padding: 14,
+  },
+
+  passwordHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  passwordFields: {
+    marginTop: 12,
+  },
+
+  passwordHint: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#8A8067",
+  },
+
+  passwordMessage: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#A46B54",
+    marginBottom: 12,
+  },
+
+  successPasswordMessage: {
+    color: "#6D8A63",
+  },
+
+  passwordButton: {
+    minHeight: 44,
+    borderRadius: 22,
+    backgroundColor: "#F3DF7D",
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  passwordButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#4A432F",
   },
 
   goalRow: {

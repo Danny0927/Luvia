@@ -8,8 +8,11 @@ import {
   useEffect,
   useState,
 } from "react";
+import { useAccount } from "@/contexts/account";
 
 const GOALS_STORAGE_KEY = "luvia:goals";
+const getScopedStorageKey = (baseKey: string, accountKey: string) =>
+  `${baseKey}:${accountKey}`;
 
 type GoalsContextValue = {
   taskGoal: number;
@@ -23,15 +26,27 @@ type GoalsContextValue = {
 const GoalsContext = createContext<GoalsContextValue | null>(null);
 
 export function GoalsProvider({ children }: { children: ReactNode }) {
+  const { activeAccountKey } = useAccount();
   const [taskGoal, setTaskGoal] = useState(4);
   const [stepGoal, setStepGoal] = useState(10000);
   const [waterGoal, setWaterGoal] = useState(8);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    if (!activeAccountKey) {
+      return;
+    }
+
+    setTaskGoal(4);
+    setStepGoal(10000);
+    setWaterGoal(8);
+    setHydrated(false);
+
     const loadGoals = async () => {
       try {
-        const storedGoals = await AsyncStorage.getItem(GOALS_STORAGE_KEY);
+        const storedGoals = await AsyncStorage.getItem(
+          getScopedStorageKey(GOALS_STORAGE_KEY, activeAccountKey)
+        );
 
         if (storedGoals) {
           const parsedGoals = JSON.parse(storedGoals) as Partial<{
@@ -60,20 +75,20 @@ export function GoalsProvider({ children }: { children: ReactNode }) {
     };
 
     void loadGoals();
-  }, []);
+  }, [activeAccountKey]);
 
   useEffect(() => {
-    if (!hydrated) {
+    if (!hydrated || !activeAccountKey) {
       return;
     }
 
     void AsyncStorage.setItem(
-      GOALS_STORAGE_KEY,
+      getScopedStorageKey(GOALS_STORAGE_KEY, activeAccountKey),
       JSON.stringify({ taskGoal, stepGoal, waterGoal })
     ).catch(() => {
       // Keep in-memory goals even if persistence fails.
     });
-  }, [hydrated, stepGoal, taskGoal, waterGoal]);
+  }, [activeAccountKey, hydrated, stepGoal, taskGoal, waterGoal]);
 
   return (
     <GoalsContext.Provider

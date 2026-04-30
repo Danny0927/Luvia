@@ -8,7 +8,15 @@ import {
   useState,
 } from "react";
 
-const ACCOUNT_STORAGE_KEY = "luvia:account";
+const ACCOUNT_STORAGE_KEY = "luvia:accounts:v2";
+
+type AccountRecord = {
+  name: string;
+  email: string;
+  birthDate: string;
+  profileImageUri: string;
+  password: string;
+};
 
 type AccountContextValue = {
   name: string;
@@ -21,10 +29,13 @@ type AccountContextValue = {
   setProfileImageUri: (value: SetStateAction<string>) => void;
   password: string;
   setPassword: (value: SetStateAction<string>) => void;
+  activeAccountKey: string;
   hasAccount: boolean;
   accountExists: boolean;
   hydrated: boolean;
-  activateAccount: () => void;
+  accountEmailExists: (email: string) => boolean;
+  resetAccountDraft: () => void;
+  activateAccount: () => boolean;
   logIn: (email: string, password: string) => boolean;
   logOut: () => void;
 };
@@ -37,28 +48,78 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const [birthDate, setBirthDate] = useState("");
   const [profileImageUri, setProfileImageUri] = useState("");
   const [password, setPassword] = useState("");
+  const [accountsByEmail, setAccountsByEmail] = useState<Record<string, AccountRecord>>({});
+  const [activeEmailKey, setActiveEmailKey] = useState("");
   const [loggedIn, setLoggedIn] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
+  const getEmailKey = (value: string) => value.trim().toLowerCase();
+
+  const getCurrentAccount = (): AccountRecord => ({
+    name,
+    email,
+    birthDate,
+    profileImageUri,
+    password,
+  });
+
+  const loadAccount = (account: AccountRecord) => {
+    setName(account.name);
+    setEmail(account.email);
+    setBirthDate(account.birthDate);
+    setProfileImageUri(account.profileImageUri);
+    setPassword(account.password);
+  };
+
+  const resetAccountDraft = () => {
+    setName("");
+    setEmail("");
+    setBirthDate("");
+    setProfileImageUri("");
+    setPassword("");
+    setActiveEmailKey("");
+    setLoggedIn(false);
+  };
+
+  const accountEmailExists = (emailInput: string) =>
+    !!accountsByEmail[getEmailKey(emailInput)];
+
   const activateAccount = () => {
+    const emailKey = getEmailKey(email);
+
+    if (!emailKey || accountsByEmail[emailKey]) {
+      return false;
+    }
+
+    setAccountsByEmail((currentAccounts) => ({
+      ...currentAccounts,
+      [emailKey]: getCurrentAccount(),
+    }));
+    setActiveEmailKey(emailKey);
     setLoggedIn(true);
+
+    return true;
   };
 
   const logIn = (emailInput: string, passwordInput: string) => {
-    const emailMatches =
-      email.trim().toLowerCase() === emailInput.trim().toLowerCase();
-    const passwordMatches = password === passwordInput;
-    const canLogIn = emailMatches && passwordMatches;
+    const emailKey = getEmailKey(emailInput);
+    const account = accountsByEmail[emailKey];
+    const canLogIn = !!account && account.password === passwordInput;
 
-    if (canLogIn) {
-      setLoggedIn(true);
+    if (!canLogIn || !account) {
+      return false;
     }
 
-    return canLogIn;
+    loadAccount(account);
+    setActiveEmailKey(emailKey);
+    setLoggedIn(true);
+
+    return true;
   };
 
   const logOut = () => {
     setLoggedIn(false);
+    setActiveEmailKey("");
   };
 
   useEffect(() => {
@@ -68,6 +129,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
         if (storedAccount) {
           const parsedAccount = JSON.parse(storedAccount) as Partial<{
+            accountsByEmail: Record<string, AccountRecord>;
+            accounts: Record<string, AccountRecord>;
             name: string;
             email: string;
             birthDate: string;
@@ -75,24 +138,32 @@ export function AccountProvider({ children }: { children: ReactNode }) {
             password: string;
           }>;
 
-          if (typeof parsedAccount.name === "string") {
-            setName(parsedAccount.name);
-          }
+          if (parsedAccount.accountsByEmail) {
+            setAccountsByEmail(parsedAccount.accountsByEmail);
+          } else if (parsedAccount.accounts) {
+            setAccountsByEmail(parsedAccount.accounts);
+          } else if (
+            typeof parsedAccount.name === "string" &&
+            typeof parsedAccount.email === "string" &&
+            typeof parsedAccount.password === "string"
+          ) {
+            const migratedAccount: AccountRecord = {
+              name: parsedAccount.name,
+              email: parsedAccount.email,
+              birthDate:
+                typeof parsedAccount.birthDate === "string"
+                  ? parsedAccount.birthDate
+                  : "",
+              profileImageUri:
+                typeof parsedAccount.profileImageUri === "string"
+                  ? parsedAccount.profileImageUri
+                  : "",
+              password: parsedAccount.password,
+            };
 
-          if (typeof parsedAccount.email === "string") {
-            setEmail(parsedAccount.email);
-          }
-
-          if (typeof parsedAccount.birthDate === "string") {
-            setBirthDate(parsedAccount.birthDate);
-          }
-
-          if (typeof parsedAccount.profileImageUri === "string") {
-            setProfileImageUri(parsedAccount.profileImageUri);
-          }
-
-          if (typeof parsedAccount.password === "string") {
-            setPassword(parsedAccount.password);
+            setAccountsByEmail({
+              [getEmailKey(migratedAccount.email)]: migratedAccount,
+            });
           }
         }
       } catch {
@@ -112,11 +183,31 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
     void AsyncStorage.setItem(
       ACCOUNT_STORAGE_KEY,
-      JSON.stringify({ name, email, birthDate, profileImageUri, password })
+      JSON.stringify({ accountsByEmail })
     ).catch(() => {
       // Keep in-memory account details even if persistence fails.
     });
-  }, [birthDate, email, hydrated, name, password, profileImageUri]);
+  }, [accountsByEmail, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || !loggedIn || !activeEmailKey) {
+      return;
+    }
+
+    setAccountsByEmail((currentAccounts) => ({
+      ...currentAccounts,
+      [activeEmailKey]: getCurrentAccount(),
+    }));
+  }, [
+    activeEmailKey,
+    birthDate,
+    email,
+    hydrated,
+    loggedIn,
+    name,
+    password,
+    profileImageUri,
+  ]);
 
   return (
     <AccountContext.Provider
@@ -131,12 +222,12 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         setProfileImageUri,
         password,
         setPassword,
+        activeAccountKey: activeEmailKey,
         hasAccount: loggedIn,
-        accountExists:
-          name.trim().length > 0 &&
-          email.trim().length > 0 &&
-          password.length > 0,
+        accountExists: Object.keys(accountsByEmail).length > 0,
         hydrated,
+        accountEmailExists,
+        resetAccountDraft,
         activateAccount,
         logIn,
         logOut,

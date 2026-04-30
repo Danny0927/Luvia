@@ -10,11 +10,16 @@ const luviaLogo = require("@/assets/images/luvia-logo.png");
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { accountExists, logIn: logInAccount } = useAccount();
+  const {
+    accountEmailExists,
+    hydrated,
+    logIn: logInAccount,
+  } = useAccount();
   const [emailInput, setEmailInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-  const canLogIn = emailInput.trim().length > 0 && passwordInput.length > 0;
+  const canLogIn =
+    hydrated && emailInput.trim().length > 0 && passwordInput.length > 0;
 
   const logIn = () => {
     const trimmedEmail = emailInput.trim();
@@ -23,7 +28,11 @@ export default function LoginScreen() {
       return;
     }
 
-    if (!accountExists) {
+    if (!hydrated) {
+      return;
+    }
+
+    if (!accountEmailExists(trimmedEmail)) {
       setErrorMessage("Create an account first.");
       return;
     }
@@ -48,18 +57,20 @@ export default function LoginScreen() {
             <Image
               source={luviaLogo}
               style={styles.logo}
-              contentFit="contain"
+              contentFit="cover"
               transition={200}
             />
-            <Text style={styles.heroTitle}>Start your day with Luvia</Text>
-            <Text style={styles.heroText}>A calm place for your plans, steps and water.</Text>
+            <Text style={styles.heroTitle}>Start with clarity</Text>
+            <Text style={styles.heroText}>
+              Sign in to continue your rhythm of plans, movement and hydration.
+            </Text>
 
             <Text style={styles.inputLabel}>Email</Text>
             <TextInput
               style={styles.input}
               value={emailInput}
               onChangeText={setEmailInput}
-              placeholder="you@example.com"
+              placeholder="Email address"
               placeholderTextColor="#B8AD91"
               autoCapitalize="none"
               keyboardType="email-address"
@@ -75,7 +86,7 @@ export default function LoginScreen() {
                 setPasswordInput(value);
                 setErrorMessage("");
               }}
-              placeholder="Your password"
+              placeholder="Password"
               placeholderTextColor="#B8AD91"
               secureTextEntry
               returnKeyType="done"
@@ -92,7 +103,9 @@ export default function LoginScreen() {
               onPress={logIn}
             >
               <Ionicons name="log-in-outline" size={18} color="#4A432F" />
-              <Text style={styles.primaryButtonText}>Log in</Text>
+              <Text style={styles.primaryButtonText}>
+                {hydrated ? "Continue" : "Loading"}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -100,7 +113,7 @@ export default function LoginScreen() {
               onPress={() => router.push("/create-account")}
             >
               <Ionicons name="person-add-outline" size={18} color="#C9B85C" />
-              <Text style={styles.secondaryButtonText}>Create account</Text>
+              <Text style={styles.secondaryButtonText}>Create new account</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -122,24 +135,29 @@ const styles = StyleSheet.create({
   },
 
   logo: {
-    width: 170,
-    height: 170,
+    width: 190,
+    height: 190,
     alignSelf: "center",
-    marginBottom: 12,
+    marginTop: -10,
+    marginBottom: 2,
+    borderRadius: 95,
   },
 
   heroTitle: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: "700",
     color: "#2B2B2B",
     textAlign: "center",
+    marginTop: 0,
   },
 
   heroText: {
-    fontSize: 13,
-    lineHeight: 19,
+    maxWidth: 270,
+    alignSelf: "center",
+    fontSize: 14,
+    lineHeight: 21,
     color: "#8A8067",
-    marginTop: 8,
+    marginTop: 10,
     marginBottom: 24,
     textAlign: "center",
   },
@@ -148,7 +166,7 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     backgroundColor: "#FFFFFF",
     paddingHorizontal: 18,
-    paddingTop: 28,
+    paddingTop: 20,
     paddingBottom: 18,
   },
 

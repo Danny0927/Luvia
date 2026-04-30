@@ -71,6 +71,8 @@ const taskIconOptions: IconName[] = [
 const TASK_SWIPE_WIDTH = 96;
 const TASKS_STORAGE_KEY = "luvia:tasks";
 const AGENDA_STORAGE_KEY = "luvia:agenda";
+const getScopedStorageKey = (baseKey: string, accountKey: string) =>
+  `${baseKey}:${accountKey}`;
 
 const getWeek = (today: Date) => {
   const start = new Date(today);
@@ -214,7 +216,7 @@ const getTaskTimeLabel = (task: Task, taskDate: Date, today: Date) => {
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { birthDate, profileImageUri } = useAccount();
+  const { activeAccountKey, birthDate, profileImageUri } = useAccount();
   const { steps, waterGlasses } = useDailyProgress();
   const { waterGoal } = useGoals();
   const [now, setNow] = useState(() => new Date());
@@ -245,10 +247,22 @@ export default function HomeScreen() {
   }, []);
 
   const loadHomeData = useCallback(async () => {
+    if (!activeAccountKey) {
+      return;
+    }
+
+    setHydratedTasks(false);
+    setTasksByDate({});
+    setAgendaByDate({});
+
     try {
       const [storedTasks, storedAgenda] = await Promise.all([
-        AsyncStorage.getItem(TASKS_STORAGE_KEY),
-        AsyncStorage.getItem(AGENDA_STORAGE_KEY),
+        AsyncStorage.getItem(
+          getScopedStorageKey(TASKS_STORAGE_KEY, activeAccountKey)
+        ),
+        AsyncStorage.getItem(
+          getScopedStorageKey(AGENDA_STORAGE_KEY, activeAccountKey)
+        ),
       ]);
 
       if (storedTasks) {
@@ -263,7 +277,7 @@ export default function HomeScreen() {
     } finally {
       setHydratedTasks(true);
     }
-  }, []);
+  }, [activeAccountKey]);
 
   useEffect(() => {
     void loadHomeData();
@@ -276,16 +290,17 @@ export default function HomeScreen() {
   );
 
   useEffect(() => {
-    if (!hydratedTasks) {
+    if (!hydratedTasks || !activeAccountKey) {
       return;
     }
 
-    void AsyncStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasksByDate)).catch(
-      () => {
+    void AsyncStorage.setItem(
+      getScopedStorageKey(TASKS_STORAGE_KEY, activeAccountKey),
+      JSON.stringify(tasksByDate)
+    ).catch(() => {
         // Keep in-memory tasks even if persistence fails.
-      }
-    );
-  }, [hydratedTasks, tasksByDate]);
+      });
+  }, [activeAccountKey, hydratedTasks, tasksByDate]);
 
   const isToday = isSameDate(selectedDate, today);
   const dayLabel = isToday
