@@ -1,5 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { ScreenGradient } from "@/components/screen-gradient";
 import { useAccount } from "@/contexts/account";
 import { useDailyProgress } from "@/contexts/daily-progress";
@@ -122,6 +124,8 @@ export default function ProfileScreen() {
     email,
     birthDate,
     setBirthDate,
+    profileImageUri,
+    setProfileImageUri,
     logOut,
   } = useAccount();
   const {
@@ -169,6 +173,26 @@ export default function ProfileScreen() {
   const openSection = (section: ProfileSection) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setActiveSection((current) => (current === section ? null : section));
+  };
+
+  const chooseProfilePhoto = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      shape: "oval",
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]?.uri) {
+      setProfileImageUri(result.assets[0].uri);
+    }
   };
 
   const handleLogOut = () => {
@@ -306,7 +330,7 @@ export default function ProfileScreen() {
       <View style={styles.panel}>
         <Text style={styles.panelTitle}>Theme</Text>
         <View style={styles.themeRow}>
-          {(["Standard", "Soft", "Minimal"] as const).map((item) => {
+          {(["Standard", "Light", "Dark"] as const).map((item) => {
             const active = theme === item;
 
             return (
@@ -366,9 +390,20 @@ export default function ProfileScreen() {
         </View>
 
         <View style={styles.profileCard}>
-          <View style={styles.avatar}>
-            <Ionicons name="person-outline" size={42} color="#C9B85C" />
-          </View>
+          <TouchableOpacity style={styles.avatar} onPress={chooseProfilePhoto}>
+            {profileImageUri ? (
+              <Image
+                source={{ uri: profileImageUri }}
+                style={styles.avatarImage}
+                contentFit="cover"
+              />
+            ) : (
+              <Ionicons name="person-outline" size={42} color="#C9B85C" />
+            )}
+            <View style={styles.avatarEditButton}>
+              <Ionicons name="camera" size={15} color="#4A432F" />
+            </View>
+          </TouchableOpacity>
           <Text style={styles.name}>
             {name.trim().length === 0
               ? "Your profile"
@@ -377,6 +412,28 @@ export default function ProfileScreen() {
                 : `${name}, ${age}`}
           </Text>
           <Text style={styles.subtitle}>Daily planning, movement and hydration</Text>
+          <View style={styles.photoActions}>
+            <TouchableOpacity
+              style={styles.photoButton}
+              onPress={chooseProfilePhoto}
+            >
+              <Ionicons name="image-outline" size={16} color="#C9B85C" />
+              <Text style={styles.photoButtonText}>
+                {profileImageUri ? "Change photo" : "Add photo"}
+              </Text>
+            </TouchableOpacity>
+            {profileImageUri.length > 0 && (
+              <TouchableOpacity
+                style={styles.photoButton}
+                onPress={() => setProfileImageUri("")}
+              >
+                <Ionicons name="trash-outline" size={16} color="#A46B54" />
+                <Text style={[styles.photoButtonText, styles.removePhotoText]}>
+                  Remove
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         <View style={styles.statsRow}>
@@ -511,7 +568,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: "#FFF7CF",
+    backgroundColor: "#FFF3BE",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -542,6 +599,27 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 14,
+    overflow: "visible",
+  },
+
+  avatarImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 46,
+  },
+
+  avatarEditButton: {
+    position: "absolute",
+    right: 0,
+    bottom: 0,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#F3DF7D",
+    borderWidth: 3,
+    borderColor: "#FFF3BE",
+    justifyContent: "center",
+    alignItems: "center",
   },
 
   name: {
@@ -555,6 +633,32 @@ const styles = StyleSheet.create({
     color: "#8A8067",
     marginTop: 6,
     textAlign: "center",
+  },
+
+  photoActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+  },
+
+  photoButton: {
+    minHeight: 36,
+    borderRadius: 18,
+    backgroundColor: "#FFFBEA",
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+
+  photoButtonText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#8D7A3A",
+  },
+
+  removePhotoText: {
+    color: "#A46B54",
   },
 
   statsRow: {

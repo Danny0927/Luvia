@@ -9,7 +9,7 @@ import {
 
 const THEME_STORAGE_KEY = "luvia:theme";
 
-export type LuviaTheme = "Standard" | "Soft" | "Minimal";
+export type LuviaTheme = "Standard" | "Light" | "Dark";
 
 type ThemePreferenceContextValue = {
   theme: LuviaTheme;
@@ -18,6 +18,26 @@ type ThemePreferenceContextValue = {
 
 const ThemePreferenceContext =
   createContext<ThemePreferenceContextValue | null>(null);
+
+const normalizeTheme = (storedTheme: string | null): LuviaTheme | null => {
+  if (
+    storedTheme === "Standard" ||
+    storedTheme === "Light" ||
+    storedTheme === "Dark"
+  ) {
+    return storedTheme;
+  }
+
+  if (storedTheme === "Soft") {
+    return "Light";
+  }
+
+  if (storedTheme === "Minimal") {
+    return "Dark";
+  }
+
+  return null;
+};
 
 export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<LuviaTheme>("Standard");
@@ -28,12 +48,10 @@ export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
       try {
         const storedTheme = await AsyncStorage.getItem(THEME_STORAGE_KEY);
 
-        if (
-          storedTheme === "Standard" ||
-          storedTheme === "Soft" ||
-          storedTheme === "Minimal"
-        ) {
-          setThemeState(storedTheme);
+        const parsedTheme = normalizeTheme(storedTheme);
+
+        if (parsedTheme) {
+          setThemeState(parsedTheme);
         }
       } catch {
         // Keep the standard theme if local storage is unavailable.

@@ -38,6 +38,12 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Luvia to access your photos so you can choose a profile picture."
+        }
       ]
     ],
     "experiments": {

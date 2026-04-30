@@ -11,17 +11,17 @@ const tabThemes = {
     colors: ["#FFFFFF", "#FFFDF5", "#FFF5D6"],
     border: "rgba(255, 248, 220, 0.9)",
   },
-  Soft: {
+  Light: {
     active: "#6D8A63",
     inactive: "#A9A08A",
-    colors: ["#FFFFFF", "#FAF8F0", "#EAF3DD"],
-    border: "rgba(232, 240, 221, 0.95)",
+    colors: ["#FFFFFF", "#F8FBFF", "#EEF6E8"],
+    border: "rgba(238, 246, 232, 0.95)",
   },
-  Minimal: {
-    active: "#4A432F",
-    inactive: "#A9A08A",
-    colors: ["#FFFFFF", "#FCFCFA", "#F3F3EE"],
-    border: "rgba(239, 239, 232, 0.95)",
+  Dark: {
+    active: "#F3DF7D",
+    inactive: "#9E977F",
+    colors: ["#2A251B", "#211F1B", "#171717"],
+    border: "rgba(243, 223, 125, 0.18)",
   },
 } as const;
 

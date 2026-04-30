@@ -5,8 +5,8 @@ import { useThemePreference } from "@/contexts/theme-preference";
 
 const gradientThemes = {
   Standard: ["#FFFBEA", "#FFF6D8", "#FAF7EF", "#FFFFFF"],
-  Soft: ["#FFFDF5", "#F8F1E8", "#F2F5EA", "#FFFFFF"],
-  Minimal: ["#FFFFFF", "#FAFAF7", "#F5F5F0", "#FFFFFF"],
+  Light: ["#FFFFFF", "#F7FBFF", "#F4F7EF", "#FFFFFF"],
+  Dark: ["#171717", "#242015", "#302B1F", "#191919"],
 } as const;
 
 export function ScreenGradient({ children }: { children: ReactNode }) {

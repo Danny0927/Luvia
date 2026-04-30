@@ -2,8 +2,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
 import { ScreenGradient } from "@/components/screen-gradient";
+import { useFocusEffect } from "@react-navigation/native";
+import { useLocalSearchParams } from "expo-router";
 import type { ComponentProps } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
   PanResponder,
@@ -115,6 +117,29 @@ const getDateKey = (date: Date) =>
     date.getDate()
   ).padStart(2, "0")}`;
 
+const parseDateKey = (dateKey: string) => {
+  const [yearText, monthText, dayText] = dateKey.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+};
+
 const formatEventTimeInput = (value: string) => {
   const digits = value.replace(/\D/g, "").slice(0, 4);
 
@@ -135,17 +160,50 @@ const formatEventTimeInput = (value: string) => {
   return `${digits.slice(0, 2)}:${digits.slice(2)}`;
 };
 
+const getWeekRangeLabel = (weekDays: ReturnType<typeof getWeek>, today: Date) => {
+  const currentWeek = getWeek(today);
+  const isCurrentWeek =
+    weekDays.length > 0 &&
+    currentWeek.length > 0 &&
+    isSameDate(weekDays[0].full, currentWeek[0].full);
+
+  if (isCurrentWeek) {
+    return "This week";
+  }
+
+  const firstDay = weekDays[0]?.full;
+  const lastDay = weekDays[weekDays.length - 1]?.full;
+
+  if (!firstDay || !lastDay) {
+    return "Agenda";
+  }
+
+  const firstLabel = firstDay.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  const lastLabel = lastDay.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: firstDay.getFullYear() === lastDay.getFullYear() ? undefined : "numeric",
+  });
+
+  return `${firstLabel} - ${lastLabel}`;
+};
+
 export default function PlansScreen() {
+  const params = useLocalSearchParams<{
+    date?: string;
+    openCalendar?: string;
+    openedAt?: string;
+  }>();
   const today = new Date();
-  const weekDays = getWeek(today);
-  const todayIndex = weekDays.findIndex(
-    (item) =>
-      item.full.getDate() === today.getDate() &&
-      item.full.getMonth() === today.getMonth() &&
-      item.full.getFullYear() === today.getFullYear()
-  );
-  const [selectedDay, setSelectedDay] = useState(todayIndex);
   const [selectedDate, setSelectedDate] = useState(today);
+  const weekDays = getWeek(selectedDate);
+  const selectedDay = weekDays.findIndex((item) =>
+    isSameDate(item.full, selectedDate)
+  );
+  const weekRangeLabel = getWeekRangeLabel(weekDays, today);
   const [visibleMonth, setVisibleMonth] = useState(today);
   const [showCalendar, setShowCalendar] = useState(false);
   const [agendaByDate, setAgendaByDate] = useState<AgendaByDate>({});
@@ -208,6 +266,34 @@ export default function PlansScreen() {
     void loadAgenda();
   }, []);
 
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        setShowCalendar(false);
+      };
+    }, [])
+  );
+
+  useEffect(() => {
+    const requestedDateKey = Array.isArray(params.date)
+      ? params.date[0]
+      : params.date;
+
+    if (!requestedDateKey) {
+      return;
+    }
+
+    const requestedDate = parseDateKey(requestedDateKey);
+
+    if (!requestedDate) {
+      return;
+    }
+
+    setSelectedDate(requestedDate);
+    setVisibleMonth(requestedDate);
+    setShowCalendar(params.openCalendar === "true");
+  }, [params.date, params.openCalendar, params.openedAt]);
+
   useEffect(() => {
     if (!hydratedAgenda) {
       return;
@@ -261,6 +347,13 @@ export default function PlansScreen() {
     setShowAddEvent(false);
   };
 
+  const jumpToToday = () => {
+    const todayDate = new Date();
+
+    setSelectedDate(todayDate);
+    setVisibleMonth(todayDate);
+  };
+
   return (
     <ScreenGradient>
       <View style={styles.container}>
@@ -270,7 +363,7 @@ export default function PlansScreen() {
       >
         <View style={styles.topRow}>
           <View>
-            <Text style={styles.kicker}>This week</Text>
+            <Text style={styles.kicker}>{weekRangeLabel}</Text>
             <Text style={styles.title}>Agenda</Text>
           </View>
 
@@ -380,15 +473,21 @@ export default function PlansScreen() {
               {agenda.length === 0 ? "No events planned" : `${agenda.length} events planned`}
             </Text>
           </View>
-          <TouchableOpacity
-            style={styles.monthIcon}
-            onPress={() => {
-              setVisibleMonth(selectedDate);
-              setShowCalendar((visible) => !visible);
-            }}
-          >
-            <Ionicons name="calendar-outline" size={24} color="#C9B85C" />
-          </TouchableOpacity>
+          <View style={styles.monthActions}>
+            <TouchableOpacity style={styles.todayButton} onPress={jumpToToday}>
+              <Ionicons name="today-outline" size={18} color="#C9B85C" />
+              <Text style={styles.todayButtonText}>Today</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.monthIcon}
+              onPress={() => {
+                setVisibleMonth(selectedDate);
+                setShowCalendar((visible) => !visible);
+              }}
+            >
+              <Ionicons name="calendar-outline" size={24} color="#C9B85C" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {showCalendar && (
@@ -459,10 +558,6 @@ export default function PlansScreen() {
                       setSelectedDate(date);
                       setVisibleMonth(date);
                       setShowCalendar(false);
-                      const weekIndex = weekDays.findIndex((item) =>
-                        isSameDate(item.full, date)
-                      );
-                      setSelectedDay(weekIndex);
                     }}
                   >
                     {date && (
@@ -502,7 +597,6 @@ export default function PlansScreen() {
                 key={item.date}
                 style={[styles.dayCard, active && styles.activeDayCard]}
                 onPress={() => {
-                  setSelectedDay(index);
                   setSelectedDate(item.full);
                 }}
               >
@@ -746,7 +840,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: "#FFF7CF",
+    backgroundColor: "#FFF3BE",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -863,6 +957,28 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "600",
     color: "#2B2B2B",
+  },
+
+  monthActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  todayButton: {
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#FFF9E3",
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+
+  todayButtonText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#8D7A3A",
   },
 
   monthIcon: {

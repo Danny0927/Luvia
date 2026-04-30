@@ -17,6 +17,8 @@ type AccountContextValue = {
   setEmail: (value: SetStateAction<string>) => void;
   birthDate: string;
   setBirthDate: (value: SetStateAction<string>) => void;
+  profileImageUri: string;
+  setProfileImageUri: (value: SetStateAction<string>) => void;
   password: string;
   setPassword: (value: SetStateAction<string>) => void;
   hasAccount: boolean;
@@ -33,6 +35,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [birthDate, setBirthDate] = useState("");
+  const [profileImageUri, setProfileImageUri] = useState("");
   const [password, setPassword] = useState("");
   const [loggedIn, setLoggedIn] = useState(false);
   const [hydrated, setHydrated] = useState(false);
@@ -68,6 +71,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
             name: string;
             email: string;
             birthDate: string;
+            profileImageUri: string;
             password: string;
           }>;
 
@@ -81,6 +85,10 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
           if (typeof parsedAccount.birthDate === "string") {
             setBirthDate(parsedAccount.birthDate);
+          }
+
+          if (typeof parsedAccount.profileImageUri === "string") {
+            setProfileImageUri(parsedAccount.profileImageUri);
           }
 
           if (typeof parsedAccount.password === "string") {
@@ -104,11 +112,11 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
     void AsyncStorage.setItem(
       ACCOUNT_STORAGE_KEY,
-      JSON.stringify({ name, email, birthDate, password })
+      JSON.stringify({ name, email, birthDate, profileImageUri, password })
     ).catch(() => {
       // Keep in-memory account details even if persistence fails.
     });
-  }, [birthDate, email, hydrated, name, password]);
+  }, [birthDate, email, hydrated, name, password, profileImageUri]);
 
   return (
     <AccountContext.Provider
@@ -119,6 +127,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         setEmail,
         birthDate,
         setBirthDate,
+        profileImageUri,
+        setProfileImageUri,
         password,
         setPassword,
         hasAccount: loggedIn,

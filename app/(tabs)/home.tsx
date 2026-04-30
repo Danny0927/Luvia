@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
+import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { ScreenGradient } from "@/components/screen-gradient";
 import { useAccount } from "@/contexts/account";
@@ -30,6 +31,14 @@ type Task = {
 };
 
 type TasksByDate = Record<string, Task[]>;
+
+type TaskSearchResult = {
+  task: Task;
+  date: Date;
+  dateKey: string;
+  dateLabel: string;
+  taskIndex: number;
+};
 
 type AgendaItem = {
   time: string;
@@ -120,6 +129,11 @@ const getDateKey = (date: Date) =>
     date.getDate()
   ).padStart(2, "0")}`;
 
+const isSameDate = (firstDate: Date, secondDate: Date) =>
+  firstDate.getDate() === secondDate.getDate() &&
+  firstDate.getMonth() === secondDate.getMonth() &&
+  firstDate.getFullYear() === secondDate.getFullYear();
+
 const parseDateKey = (dateKey: string) => {
   const [yearText, monthText, dayText] = dateKey.split("-");
   const year = Number(yearText);
@@ -190,22 +204,26 @@ const formatCompactNumber = (value: number) => {
   return value.toString();
 };
 
+const getTaskTimeLabel = (task: Task, taskDate: Date, today: Date) => {
+  if (task.time !== "Today") {
+    return task.time;
+  }
+
+  return isSameDate(taskDate, today) ? "Today" : "Anytime";
+};
+
 export default function HomeScreen() {
   const router = useRouter();
-  const { birthDate } = useAccount();
+  const { birthDate, profileImageUri } = useAccount();
   const { steps, waterGlasses } = useDailyProgress();
   const { waterGoal } = useGoals();
   const [now, setNow] = useState(() => new Date());
   const today = now;
-  const days = getWeek(today);
-  const todayIndex = days.findIndex(
-    (item) =>
-      item.full.getDate() === today.getDate() &&
-      item.full.getMonth() === today.getMonth() &&
-      item.full.getFullYear() === today.getFullYear()
+  const [selectedDate, setSelectedDate] = useState(today);
+  const days = getWeek(selectedDate);
+  const selectedDay = days.findIndex((item) =>
+    isSameDate(item.full, selectedDate)
   );
-
-  const [selectedDay, setSelectedDay] = useState(todayIndex);
   const [tasksByDate, setTasksByDate] = useState<TasksByDate>({});
   const [agendaByDate, setAgendaByDate] = useState<AgendaByDate>({});
   const [hydratedTasks, setHydratedTasks] = useState(false);
@@ -216,7 +234,6 @@ export default function HomeScreen() {
     useState<IconName>("ellipse-outline");
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [showNextEventDetails, setShowNextEventDetails] = useState(false);
   const greeting = getGreeting(now);
 
   useEffect(() => {
@@ -270,11 +287,7 @@ export default function HomeScreen() {
     );
   }, [hydratedTasks, tasksByDate]);
 
-  const selectedDate = days[selectedDay]?.full ?? today;
-  const isToday =
-    selectedDate.getDate() === today.getDate() &&
-    selectedDate.getMonth() === today.getMonth() &&
-    selectedDate.getFullYear() === today.getFullYear();
+  const isToday = isSameDate(selectedDate, today);
   const dayLabel = isToday
     ? "Today"
     : selectedDate.toLocaleDateString("en-US", { weekday: "long" });
@@ -340,9 +353,47 @@ export default function HomeScreen() {
       })[0] ?? null;
   const completedTasks = tasks.filter((task) => task.done).length;
   const taskProgress = tasks.length > 0 ? completedTasks / tasks.length : 0;
-  const visibleTasks = tasks.filter((task) =>
-    task.text.toLowerCase().includes(searchQuery.trim().toLowerCase())
-  );
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const isSearchingTasks = normalizedSearchQuery.length > 0;
+  const taskSearchResults: TaskSearchResult[] = isSearchingTasks
+    ? Object.entries(tasksByDate)
+        .flatMap(([dateKey, dateTasks]) => {
+          const date = parseDateKey(dateKey);
+
+          if (!date) {
+            return [];
+          }
+
+          const dateLabelForTask = date.toLocaleDateString("en-US", {
+            month: "long",
+            day: "numeric",
+            year: date.getFullYear() === today.getFullYear() ? undefined : "numeric",
+          });
+
+          return dateTasks
+            .map((task, taskIndex) => ({
+              task,
+              taskIndex,
+              date,
+              dateKey,
+              dateLabel: dateLabelForTask,
+            }))
+            .filter(({ task }) =>
+              task.text.toLowerCase().includes(normalizedSearchQuery)
+            );
+        })
+        .sort((firstTask, secondTask) => {
+          const dateDifference =
+            firstTask.date.getTime() - secondTask.date.getTime();
+
+          if (dateDifference !== 0) {
+            return dateDifference;
+          }
+
+          return firstTask.task.time.localeCompare(secondTask.task.time);
+        })
+    : [];
+  const visibleTasks = isSearchingTasks ? [] : tasks;
 
   const updateSelectedDateTasks = (updater: (currentTasks: Task[]) => Task[]) => {
     setTasksByDate((currentTasksByDate) => ({
@@ -365,6 +416,37 @@ export default function HomeScreen() {
     );
   };
 
+  const deleteTaskForDate = (dateKey: string, index: number) => {
+    setTasksByDate((currentTasksByDate) => ({
+      ...currentTasksByDate,
+      [dateKey]: (currentTasksByDate[dateKey] ?? []).filter(
+        (_, taskIndex) => taskIndex !== index
+      ),
+    }));
+  };
+
+  const openTaskDate = (date: Date) => {
+    setSelectedDate(date);
+    setSearchQuery("");
+    setShowSearch(false);
+  };
+
+  const openNextEventInAgenda = (openCalendar = false) => {
+    if (!nextEvent) {
+      router.push("/plans");
+      return;
+    }
+
+    router.push({
+      pathname: "/plans",
+      params: {
+        date: getDateKey(nextEvent.date),
+        openCalendar: openCalendar ? "true" : "false",
+        openedAt: Date.now().toString(),
+      },
+    });
+  };
+
   const addTask = () => {
     const trimmedText = newTaskText.trim();
 
@@ -376,7 +458,7 @@ export default function HomeScreen() {
       ...currentTasks,
       {
         text: trimmedText,
-        time: newTaskTime.trim() || "Today",
+        time: newTaskTime.trim() || "Anytime",
         icon: selectedTaskIcon,
         done: false,
       },
@@ -414,7 +496,15 @@ export default function HomeScreen() {
               style={styles.circleBtn}
               onPress={() => router.push("/profile")}
             >
-              <Ionicons name="person-outline" size={20} color="#C9B85C" />
+              {profileImageUri ? (
+                <Image
+                  source={{ uri: profileImageUri }}
+                  style={styles.profileButtonImage}
+                  contentFit="cover"
+                />
+              ) : (
+                <Ionicons name="person-outline" size={20} color="#C9B85C" />
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -468,7 +558,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 key={`${item.day}-${item.date}`}
                 style={[styles.dayCard, active && styles.activeDayCard]}
-                onPress={() => setSelectedDay(index)}
+                onPress={() => setSelectedDate(item.full)}
               >
                 <Text style={[styles.dayText, active && styles.activeDayText]}>
                   {item.day}
@@ -504,7 +594,7 @@ export default function HomeScreen() {
           <Text style={styles.sectionTitle}>Next event</Text>
           <TouchableOpacity
             style={styles.filterButton}
-            onPress={() => setSelectedDay(todayIndex)}
+            onPress={() => openNextEventInAgenda(true)}
           >
             <Ionicons name="calendar-outline" size={18} color="#C9B85C" />
           </TouchableOpacity>
@@ -514,7 +604,7 @@ export default function HomeScreen() {
           <>
             <TouchableOpacity
               style={styles.eventCard}
-              onPress={() => setShowNextEventDetails((visible) => !visible)}
+              onPress={() => openNextEventInAgenda(false)}
             >
               <View style={styles.eventTime}>
                 <Text style={styles.eventTimeText}>{nextEvent.time}</Text>
@@ -538,18 +628,11 @@ export default function HomeScreen() {
                 </Text>
               </View>
               <Ionicons
-                name={showNextEventDetails ? "chevron-up" : "chevron-forward"}
+                name="chevron-forward"
                 size={18}
                 color="#C7B98F"
               />
             </TouchableOpacity>
-            {showNextEventDetails && (
-              <View style={styles.eventDetailCard}>
-                <Text style={styles.eventDetailText}>
-                  {nextEvent.type} event on {nextEvent.dateLabel}.
-                </Text>
-              </View>
-            )}
           </>
         ) : (
           <View style={styles.emptyEventCard}>
@@ -648,7 +731,7 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.taskList}>
-          {visibleTasks.length === 0 && (
+          {visibleTasks.length === 0 && taskSearchResults.length === 0 && (
             <View style={styles.emptyTaskCard}>
               <Ionicons name="add-circle-outline" size={24} color="#C9B85C" />
               <Text style={styles.emptyTaskTitle}>
@@ -656,11 +739,26 @@ export default function HomeScreen() {
               </Text>
               <Text style={styles.emptyTaskText}>
                 {searchQuery.trim().length > 0
-                  ? "Try another search term for this day."
+                  ? "Try another search term across your calendar."
                   : "Tap the plus button above to add one for this day."}
               </Text>
             </View>
           )}
+          {taskSearchResults.map((result) => (
+            <View
+              key={`${result.dateKey}-${result.task.text}-${result.taskIndex}`}
+            >
+              <SwipeableTaskCard
+                task={result.task}
+                dateLabel={result.dateLabel}
+                timeLabel={getTaskTimeLabel(result.task, result.date, today)}
+                onPress={() => openTaskDate(result.date)}
+                onDelete={() =>
+                  deleteTaskForDate(result.dateKey, result.taskIndex)
+                }
+              />
+            </View>
+          ))}
           {visibleTasks.map((task) => {
             const taskIndex = tasks.findIndex((item) => item === task);
 
@@ -668,6 +766,7 @@ export default function HomeScreen() {
             <SwipeableTaskCard
               key={`${task.text}-${taskIndex}`}
               task={task}
+              timeLabel={getTaskTimeLabel(task, selectedDate, today)}
               onPress={() => toggleTask(taskIndex)}
               onDelete={() => deleteTask(taskIndex)}
             />
@@ -682,10 +781,14 @@ export default function HomeScreen() {
 
 function SwipeableTaskCard({
   task,
+  dateLabel,
+  timeLabel,
   onPress,
   onDelete,
 }: {
   task: Task;
+  dateLabel?: string;
+  timeLabel?: string;
   onPress: () => void;
   onDelete: () => void;
 }) {
@@ -767,10 +870,13 @@ function SwipeableTaskCard({
           </View>
 
           <View style={styles.taskContent}>
+            {dateLabel && (
+              <Text style={styles.taskDateBadge}>{dateLabel}</Text>
+            )}
             <Text style={[styles.taskText, task.done && styles.taskDone]}>
               {task.text}
             </Text>
-            <Text style={styles.taskTime}>{task.time}</Text>
+            <Text style={styles.taskTime}>{timeLabel ?? task.time}</Text>
           </View>
 
           <Ionicons
@@ -823,13 +929,20 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: "#FFF7CF",
+    backgroundColor: "#FFF3BE",
     justifyContent: "center",
     alignItems: "center",
+    overflow: "hidden",
   },
 
   activeCircleBtn: {
     backgroundColor: "#FFF0A8",
+  },
+
+  profileButtonImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 19,
   },
 
   searchBar: {
@@ -1033,20 +1146,6 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
 
-  eventDetailCard: {
-    borderRadius: 20,
-    backgroundColor: "#FFFFFF",
-    padding: 14,
-    marginTop: -18,
-    marginBottom: 28,
-  },
-
-  eventDetailText: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: "#8A8067",
-  },
-
   emptyEventCard: {
     borderRadius: 22,
     backgroundColor: "#FFFFFF",
@@ -1196,6 +1295,19 @@ const styles = StyleSheet.create({
     color: "#8A8067",
     marginTop: 5,
     textAlign: "center",
+  },
+
+  taskDateBadge: {
+    alignSelf: "flex-start",
+    borderRadius: 11,
+    backgroundColor: "#FFF7CF",
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#C9B85C",
+    marginBottom: 7,
+    overflow: "hidden",
   },
 
   swipeContainer: {
