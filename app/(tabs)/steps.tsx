@@ -65,7 +65,8 @@ const activityFilters = ["All", "Done", "Planned"] as const;
 const STEP_INCREMENT = 250;
 const STEP_REPEAT_DELAY = 350;
 const STEP_REPEAT_INTERVAL = 90;
-const RING_SEGMENT_COUNT = 44;
+const RING_RADIUS = 55;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 export default function StepsScreen() {
   const { activeAccountKey } = useAccount();
@@ -82,9 +83,22 @@ export default function StepsScreen() {
   const [walkSessions, setWalkSessions] =
     useState<WalkSession[]>(defaultWalkSessions);
   const [hydratedActivity, setHydratedActivity] = useState(false);
+  const ringSegmentCount = Math.max(Math.ceil(goal / STEP_INCREMENT), 1);
+  const ringSegmentArc = RING_CIRCUMFERENCE / ringSegmentCount;
+  const ringSegmentWidth = Math.min(
+    34,
+    Math.max(2.5, ringSegmentArc * 0.72)
+  );
+  const ringSegmentHeight = Math.min(
+    14,
+    Math.max(7, ringSegmentArc * 0.42)
+  );
   const progress = goal > 0 ? steps / goal : 0;
   const circleProgress = Math.min(progress, 1);
-  const activeRingSegments = Math.round(circleProgress * RING_SEGMENT_COUNT);
+  const activeRingSegments = Math.min(
+    Math.ceil(steps / STEP_INCREMENT),
+    ringSegmentCount
+  );
   const remaining = Math.max(goal - steps, 0);
   const distance = steps * 0.00075;
   const calories = Math.round(steps * 0.04);
@@ -246,16 +260,19 @@ export default function StepsScreen() {
               ]}
             />
             <View style={styles.progressRing}>
-              {Array.from({ length: RING_SEGMENT_COUNT }, (_, index) => (
+              {Array.from({ length: ringSegmentCount }, (_, index) => (
                 <View
                   key={index}
                   style={[
                     styles.ringSegment,
                     index < activeRingSegments && styles.activeRingSegment,
                     {
+                      width: ringSegmentWidth,
+                      height: ringSegmentHeight,
+                      borderRadius: Math.min(6, ringSegmentWidth / 2),
                       transform: [
-                        { rotate: `${(360 / RING_SEGMENT_COUNT) * index}deg` },
-                        { translateY: -55 },
+                        { rotate: `${(360 / ringSegmentCount) * index}deg` },
+                        { translateY: -RING_RADIUS },
                       ],
                     },
                   ]}

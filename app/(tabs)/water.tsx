@@ -16,7 +16,8 @@ import {
 } from "react-native";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
-const RING_SEGMENT_COUNT = 44;
+const RING_RADIUS = 55;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 type Reminder = {
   id: string;
@@ -72,9 +73,19 @@ export default function WaterScreen() {
   const [expandedReminder, setExpandedReminder] = useState<string | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>(defaultReminders);
   const [hydratedReminders, setHydratedReminders] = useState(false);
+  const ringSegmentCount = Math.max(goal, 1);
+  const ringSegmentArc = RING_CIRCUMFERENCE / ringSegmentCount;
+  const ringSegmentWidth = Math.min(
+    34,
+    Math.max(2.5, ringSegmentArc * 0.72)
+  );
+  const ringSegmentHeight = Math.min(
+    14,
+    Math.max(7, ringSegmentArc * 0.42)
+  );
   const progress = glasses / goal;
   const circleProgress = Math.min(progress, 1);
-  const activeRingSegments = Math.round(circleProgress * RING_SEGMENT_COUNT);
+  const activeRingSegments = Math.min(glasses, ringSegmentCount);
   const liters = (glasses * 0.25).toFixed(2);
   const goalLiters = (goal * 0.25).toFixed(2);
   const visibleReminders = reverseReminders ? [...reminders].reverse() : reminders;
@@ -212,16 +223,19 @@ export default function WaterScreen() {
               ]}
             />
             <View style={styles.progressRing}>
-              {Array.from({ length: RING_SEGMENT_COUNT }, (_, index) => (
+              {Array.from({ length: ringSegmentCount }, (_, index) => (
                 <View
                   key={index}
                   style={[
                     styles.ringSegment,
                     index < activeRingSegments && styles.activeRingSegment,
                     {
+                      width: ringSegmentWidth,
+                      height: ringSegmentHeight,
+                      borderRadius: Math.min(6, ringSegmentWidth / 2),
                       transform: [
-                        { rotate: `${(360 / RING_SEGMENT_COUNT) * index}deg` },
-                        { translateY: -55 },
+                        { rotate: `${(360 / ringSegmentCount) * index}deg` },
+                        { translateY: -RING_RADIUS },
                       ],
                     },
                   ]}
