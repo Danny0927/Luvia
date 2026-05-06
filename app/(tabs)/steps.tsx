@@ -1,56 +1,59 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { ScreenGradient } from "@/components/screen-gradient";
+import { useAccount } from "@/contexts/account";
 import { useDailyProgress } from "@/contexts/daily-progress";
 import { useGoals } from "@/contexts/goals";
 import type { ComponentProps } from "react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 
-const weekProgress = [
-  { day: "Mon", value: 0.58 },
-  { day: "Tue", value: 0.72 },
-  { day: "Wed", value: 0.86 },
-  { day: "Thu", value: 0.64 },
-  { day: "Fri", value: 0.92 },
-  { day: "Sat", value: 0.48 },
-  { day: "Sun", value: 0.78 },
-];
-
-const walkSessions: {
+type WalkSession = {
+  id: string;
   title: string;
   detail: string;
   icon: IconName;
   background: string;
   color: string;
   status: "Done" | "Planned";
-}[] = [
+};
+
+const ACTIVITY_STORAGE_KEY = "luvia:step-activity";
+const getScopedStorageKey = (baseKey: string, accountKey: string) =>
+  `${baseKey}:${accountKey}`;
+
+const defaultWalkSessions: WalkSession[] = [
   {
+    id: "morning-walk",
     title: "Morning walk",
-    detail: "2,840 steps · 24 min",
+    detail: "0 steps · 0 min",
     icon: "sunny-outline",
     background: "#FFF7CF",
     color: "#C9B85C",
-    status: "Done",
+    status: "Planned",
   },
   {
+    id: "errands",
     title: "Errands",
-    detail: "1,620 steps · light pace",
+    detail: "0 steps · not started",
     icon: "bag-handle-outline",
     background: "#FFF2BE",
     color: "#8D7A3A",
-    status: "Done",
+    status: "Planned",
   },
   {
+    id: "evening-reset",
     title: "Evening reset",
-    detail: "Planned · 20 min",
+    detail: "Planned · 0 min",
     icon: "moon-outline",
     background: "#E8F0DD",
     color: "#6D8A63",
@@ -59,20 +62,132 @@ const walkSessions: {
 ];
 
 const activityFilters = ["All", "Done", "Planned"] as const;
+const STEP_INCREMENT = 250;
+const STEP_REPEAT_DELAY = 350;
+const STEP_REPEAT_INTERVAL = 90;
+const RING_SEGMENT_COUNT = 44;
 
 export default function StepsScreen() {
+  const { activeAccountKey } = useAccount();
   const { stepGoal: goal } = useGoals();
-  const { steps, setSteps } = useDailyProgress();
+  const { steps, setSteps, weekSteps } = useDailyProgress();
+  const stepRepeatTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stepRepeatInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const didRepeatSteps = useRef(false);
   const [showStats, setShowStats] = useState(false);
   const [showChart, setShowChart] = useState(true);
   const [activityFilter, setActivityFilter] =
     useState<(typeof activityFilters)[number]>("All");
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
+  const [walkSessions, setWalkSessions] =
+    useState<WalkSession[]>(defaultWalkSessions);
+  const [hydratedActivity, setHydratedActivity] = useState(false);
   const progress = goal > 0 ? steps / goal : 0;
+  const circleProgress = Math.min(progress, 1);
+  const activeRingSegments = Math.round(circleProgress * RING_SEGMENT_COUNT);
   const remaining = Math.max(goal - steps, 0);
+  const distance = steps * 0.00075;
+  const calories = Math.round(steps * 0.04);
+  const activeMinutes = Math.round(steps / 100);
+  const weekProgress = weekSteps.map((item) => ({
+    day: item.day,
+    value: goal > 0 ? item.steps / goal : 0,
+  }));
   const visibleSessions = walkSessions.filter(
     (item) => activityFilter === "All" || item.status === activityFilter
   );
+
+  useEffect(() => {
+    if (!activeAccountKey) {
+      return;
+    }
+
+    setHydratedActivity(false);
+    setWalkSessions(defaultWalkSessions);
+
+    const loadActivity = async () => {
+      try {
+        const storedActivity = await AsyncStorage.getItem(
+          getScopedStorageKey(ACTIVITY_STORAGE_KEY, activeAccountKey)
+        );
+
+        if (storedActivity) {
+          setWalkSessions(JSON.parse(storedActivity) as WalkSession[]);
+        }
+      } catch {
+        setWalkSessions(defaultWalkSessions);
+      } finally {
+        setHydratedActivity(true);
+      }
+    };
+
+    void loadActivity();
+  }, [activeAccountKey]);
+
+  useEffect(() => {
+    if (!activeAccountKey || !hydratedActivity) {
+      return;
+    }
+
+    void AsyncStorage.setItem(
+      getScopedStorageKey(ACTIVITY_STORAGE_KEY, activeAccountKey),
+      JSON.stringify(walkSessions)
+    ).catch(() => {
+      // Keep in-memory activity if persistence fails.
+    });
+  }, [activeAccountKey, hydratedActivity, walkSessions]);
+
+  const updateSession = (
+    sessionId: string,
+    updates: Partial<Pick<WalkSession, "title" | "detail" | "status">>
+  ) => {
+    setWalkSessions((currentSessions) =>
+      currentSessions.map((session) =>
+        session.id === sessionId ? { ...session, ...updates } : session
+      )
+    );
+  };
+
+  const clearStepRepeat = useCallback(() => {
+    if (stepRepeatTimeout.current) {
+      clearTimeout(stepRepeatTimeout.current);
+      stepRepeatTimeout.current = null;
+    }
+
+    if (stepRepeatInterval.current) {
+      clearInterval(stepRepeatInterval.current);
+      stepRepeatInterval.current = null;
+    }
+  }, []);
+
+  const updateSteps = (change: number) => {
+    setSteps((current) => Math.min(Math.max(current + change, 0), goal));
+  };
+
+  const startStepRepeat = (change: number) => {
+    clearStepRepeat();
+    didRepeatSteps.current = false;
+
+    stepRepeatTimeout.current = setTimeout(() => {
+      didRepeatSteps.current = true;
+      updateSteps(change);
+      stepRepeatInterval.current = setInterval(() => {
+        didRepeatSteps.current = true;
+        updateSteps(change);
+      }, STEP_REPEAT_INTERVAL);
+    }, STEP_REPEAT_DELAY);
+  };
+
+  const updateStepsOnTap = (change: number) => {
+    if (didRepeatSteps.current) {
+      didRepeatSteps.current = false;
+      return;
+    }
+
+    updateSteps(change);
+  };
+
+  useEffect(() => clearStepRepeat, [clearStepRepeat]);
 
   return (
     <ScreenGradient>
@@ -96,13 +211,17 @@ export default function StepsScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.circleBtn}
-              onPress={() => setSteps((current) => Math.max(current - 250, 0))}
+              onPress={() => updateStepsOnTap(-STEP_INCREMENT)}
+              onPressIn={() => startStepRepeat(-STEP_INCREMENT)}
+              onPressOut={clearStepRepeat}
             >
               <Ionicons name="remove" size={22} color="#C9B85C" />
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.circleBtn}
-              onPress={() => setSteps((current) => Math.min(current + 250, goal))}
+              onPress={() => updateStepsOnTap(STEP_INCREMENT)}
+              onPressIn={() => startStepRepeat(STEP_INCREMENT)}
+              onPressOut={clearStepRepeat}
             >
               <Ionicons name="add" size={22} color="#C9B85C" />
             </TouchableOpacity>
@@ -111,6 +230,38 @@ export default function StepsScreen() {
 
         <View style={styles.heroCard}>
           <View style={styles.progressCircle}>
+            <View
+              style={[
+                styles.fullGoalLight,
+                { opacity: circleProgress >= 1 ? 1 : 0 },
+              ]}
+            />
+            <View
+              style={[
+                styles.completedGlow,
+                {
+                  opacity: circleProgress * 0.85,
+                  transform: [{ scale: 1 + circleProgress * 0.03 }],
+                },
+              ]}
+            />
+            <View style={styles.progressRing}>
+              {Array.from({ length: RING_SEGMENT_COUNT }, (_, index) => (
+                <View
+                  key={index}
+                  style={[
+                    styles.ringSegment,
+                    index < activeRingSegments && styles.activeRingSegment,
+                    {
+                      transform: [
+                        { rotate: `${(360 / RING_SEGMENT_COUNT) * index}deg` },
+                        { translateY: -55 },
+                      ],
+                    },
+                  ]}
+                />
+              ))}
+            </View>
             <View style={styles.progressInner}>
               <Ionicons name="footsteps-outline" size={30} color="#C9B85C" />
               <Text style={styles.stepsNumber}>{steps.toLocaleString()}</Text>
@@ -148,17 +299,17 @@ export default function StepsScreen() {
 
         <View style={styles.summaryRow}>
           <View style={styles.summaryItem}>
-            <Text style={styles.summaryNumber}>5.6 km</Text>
+            <Text style={styles.summaryNumber}>{distance.toFixed(1)} km</Text>
             <Text style={styles.summaryLabel}>Distance</Text>
           </View>
           <View style={styles.summaryDivider} />
           <View style={styles.summaryItem}>
-            <Text style={styles.summaryNumber}>312</Text>
+            <Text style={styles.summaryNumber}>{calories}</Text>
             <Text style={styles.summaryLabel}>Calories</Text>
           </View>
           <View style={styles.summaryDivider} />
           <View style={styles.summaryItem}>
-            <Text style={styles.summaryNumber}>68m</Text>
+            <Text style={styles.summaryNumber}>{activeMinutes}m</Text>
             <Text style={styles.summaryLabel}>Active</Text>
           </View>
         </View>
@@ -208,31 +359,66 @@ export default function StepsScreen() {
 
         <View style={styles.sessionList}>
           {visibleSessions.map((item) => (
-            <TouchableOpacity
-              key={item.title}
+            <View
+              key={item.id}
               style={styles.sessionCard}
-              onPress={() =>
-                setExpandedSession((current) =>
-                  current === item.title ? null : item.title
-                )
-              }
             >
               <View style={[styles.sessionIcon, { backgroundColor: item.background }]}>
                 <Ionicons name={item.icon} size={20} color={item.color} />
               </View>
               <View style={styles.sessionContent}>
-                <Text style={styles.sessionTitle}>{item.title}</Text>
-                <Text style={styles.sessionDetail}>{item.detail}</Text>
-                {expandedSession === item.title && (
-                  <Text style={styles.sessionMeta}>{item.status}</Text>
+                {expandedSession === item.id ? (
+                  <View style={styles.sessionEditor}>
+                    <TextInput
+                      style={styles.editorInput}
+                      value={item.title}
+                      onChangeText={(value) =>
+                        updateSession(item.id, { title: value })
+                      }
+                      placeholder="Activity title"
+                      placeholderTextColor="#B8AD91"
+                    />
+                    <TextInput
+                      style={styles.editorInput}
+                      value={item.detail}
+                      onChangeText={(value) =>
+                        updateSession(item.id, { detail: value })
+                      }
+                      placeholder="Activity detail"
+                      placeholderTextColor="#B8AD91"
+                    />
+                    <TouchableOpacity
+                      style={styles.statusToggle}
+                      onPress={() =>
+                        updateSession(item.id, {
+                          status: item.status === "Done" ? "Planned" : "Done",
+                        })
+                      }
+                    >
+                      <Text style={styles.sessionMeta}>{item.status}</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={styles.sessionTitle}>{item.title}</Text>
+                    <Text style={styles.sessionDetail}>{item.detail}</Text>
+                  </>
                 )}
               </View>
-              <Ionicons
-                name={expandedSession === item.title ? "chevron-up" : "chevron-forward"}
-                size={18}
-                color="#C7B98F"
-              />
-            </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() =>
+                  setExpandedSession((current) =>
+                    current === item.id ? null : item.id
+                  )
+                }
+              >
+                <Ionicons
+                  name={expandedSession === item.id ? "chevron-up" : "chevron-forward"}
+                  size={18}
+                  color="#C7B98F"
+                />
+              </TouchableOpacity>
+            </View>
           ))}
         </View>
       </ScrollView>
@@ -302,10 +488,70 @@ const styles = StyleSheet.create({
     width: 128,
     height: 128,
     borderRadius: 64,
-    backgroundColor: "#F3DF7D",
+    backgroundColor: "#FFF9E3",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 16,
+    shadowColor: "#F3DF7D",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+    overflow: "visible",
+  },
+
+  completedGlow: {
+    position: "absolute",
+    width: 134,
+    height: 134,
+    borderRadius: 67,
+    borderWidth: 4,
+    borderColor: "#F7E789",
+    backgroundColor: "transparent",
+    shadowColor: "#F3DF7D",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.55,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+
+  fullGoalLight: {
+    position: "absolute",
+    width: 146,
+    height: 146,
+    borderRadius: 73,
+    backgroundColor: "rgba(243, 223, 125, 0.18)",
+    shadowColor: "#F3DF7D",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+
+  progressRing: {
+    position: "absolute",
+    width: 128,
+    height: 128,
+    borderRadius: 64,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  ringSegment: {
+    position: "absolute",
+    width: 5,
+    height: 13,
+    borderRadius: 3,
+    backgroundColor: "#FFF4C8",
+  },
+
+  activeRingSegment: {
+    backgroundColor: "#F3DF7D",
+    shadowColor: "#F3DF7D",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 2,
   },
 
   progressInner: {
@@ -534,5 +780,22 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#C9B85C",
     marginTop: 8,
+  },
+
+  sessionEditor: {
+    gap: 8,
+  },
+
+  editorInput: {
+    minHeight: 38,
+    borderRadius: 14,
+    backgroundColor: "#FFFBEA",
+    color: "#2B2B2B",
+    fontSize: 14,
+    paddingHorizontal: 12,
+  },
+
+  statusToggle: {
+    alignSelf: "flex-start",
   },
 });
